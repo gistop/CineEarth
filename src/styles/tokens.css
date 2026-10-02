@@ -1,0 +1,44 @@
+/* ============================================================
+   CineEarth design tokens — Nordic: airy, calm, restrained
+   ============================================================ */
+:root {
+  /* surfaces */
+  --ce-bg: #fbfbfa;            /* warm off-white */
+  --ce-surface: #ffffff;
+  --ce-surface-2: #f4f4f2;     /* muted panel fill */
+  --ce-surface-3: #ebebe8;
+  --ce-border: #e5e5e2;
+  --ce-border-strong: #d6d6d2;
+
+  /* ink */
+  --ce-text: #1d1d1b;
+  --ce-text-2: #5e5e5a;
+  --ce-text-3: #96968f;
+
+  /* accent — fjord blue */
+  --ce-accent: #38618c;
+  --ce-accent-hover: #2e5175;
+  --ce-accent-soft: #ebf1f7;
+  --ce-danger: #b3563d;
+
+  /* shape & depth */
+  --ce-radius: 10px;
+  --ce-radius-sm: 6px;
+  --ce-shadow-1: 0 1px 2px rgba(20, 24, 28, 0.05);
+  --ce-shadow-panel: 6px 0 28px rgba(14, 18, 24, 0.16), 0 1px 2px rgba(14, 18, 24, 0.08);
+  --ce-shadow-bar: 0 -8px 28px rgba(14, 18, 24, 0.16);
+
+  /* motion */
+  --ce-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ce-dur: 220ms;
+
+  /* type */
+  --ce-font: "Inter", "Inter var", -apple-system, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --ce-font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+
+  /* metrics */
+  --ce-drawer-w: 340px;
+  --ce-tl-collapsed: 48px;
+  --ce-tl-expanded: 232px;
+}
