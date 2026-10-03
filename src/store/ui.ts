@@ -15,6 +15,8 @@ interface UIState {
   /** fullscreen preview — hides all chrome */
   previewMode: boolean
   playing: boolean
+  /** user is dragging the timeline playhead — freezes the playback clock */
+  scrubbing: boolean
 
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
@@ -23,6 +25,7 @@ interface UIState {
   setTargetPickMode: (on: boolean) => void
   setPreviewMode: (on: boolean) => void
   setPlaying: (p: boolean) => void
+  setScrubbing: (s: boolean) => void
 }
 
 export const useUI = create<UIState>((set) => ({
@@ -33,6 +36,7 @@ export const useUI = create<UIState>((set) => ({
   targetPickMode: false,
   previewMode: false,
   playing: false,
+  scrubbing: false,
 
   toggleDrawer: (open) => set((s) => ({ drawerOpen: open ?? !s.drawerOpen })),
   setDrawerTab: (tab) => set({ drawerTab: tab, drawerOpen: true }),
@@ -43,4 +47,5 @@ export const useUI = create<UIState>((set) => ({
   setTargetPickMode: (on) => set({ targetPickMode: on }),
   setPreviewMode: (on) => set({ previewMode: on }),
   setPlaying: (p) => set({ playing: p }),
+  setScrubbing: (s) => set({ scrubbing: s }),
 }))

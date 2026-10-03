@@ -34,6 +34,7 @@ export default function Timeline() {
   const setTarget = useRoute((s) => s.setTarget)
   const playing = useUI((s) => s.playing)
   const setPlaying = useUI((s) => s.setPlaying)
+  const setScrubbing = useUI((s) => s.setScrubbing)
 
   const route = useRoute((s) => s.route)
   const progress = useRoute((s) => s.progress)
@@ -99,11 +100,14 @@ export default function Timeline() {
           tabIndex={0}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
+            setScrubbing(true)
             scrubTo(e.clientX)
           }}
           onPointerMove={(e) => {
             if (e.buttons === 1) scrubTo(e.clientX)
           }}
+          onPointerUp={() => setScrubbing(false)}
+          onPointerCancel={() => setScrubbing(false)}
         >
           <div className="ce-scrub-track" />
           <div className="ce-scrub-fill" style={{ width: `${progress * 100}%` }} />

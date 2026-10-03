@@ -2,7 +2,8 @@
 // Ported from CTEarth RoamTopView, adapted to CineEarth stores & palette:
 //  · OSM basemap, muted to match the ink-on-paper look
 //  · spline polyline + numbered waypoints, click to select
-//  · waypoints are DRAGGABLE (Translate) — commits lon/lat to the route store
+//  · waypoints are DRAGGABLE (Translate) — live-commits lon/lat while dragging,
+//    so globe & side view follow in real time; spline refreshes in place mid-drag
 //  · playhead marker follows the camera each frame (reads store, no re-render)
 
 import { useEffect, useRef } from 'react'
@@ -57,6 +58,15 @@ const headStyle = new Style({
   }),
 })
 
+/* original-position ghost ring shown while dragging a waypoint */
+const ghostStyle = new Style({
+  image: new CircleStyle({
+    radius: 5,
+    fill: new Fill({ color: 'rgba(0, 0, 0, 0)' }),
+    stroke: new Stroke({ color: 'rgba(56, 97, 140, 0.55)', width: 1.5, lineDash: [3, 3] }),
+  }),
+})
+
 export default function RouteTopView({ route }: { route: Route }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<Map | null>(null)
@@ -65,6 +75,7 @@ export default function RouteTopView({ route }: { route: Route }) {
   const headFeatureRef = useRef<Feature<Point> | null>(null)
   const fitTokenRef = useRef(0)
   const wpCountRef = useRef(-1)
+  const draggingRef = useRef(false)
 
   /* ---- init the map once: layers, drag interaction, click-select ---- */
   useEffect(() => {
@@ -81,6 +92,7 @@ export default function RouteTopView({ route }: { route: Route }) {
           source,
           style: (feature) => {
             if (feature.get('kind') === 'path') return pathStyle
+            if (feature.get('kind') === 'ghost') return ghostStyle
             const index = Number(feature.get('index') ?? 0)
             return waypointStyle(Number.isFinite(index) ? index : 0, feature.get('selected') === true)
           },
@@ -94,7 +106,9 @@ export default function RouteTopView({ route }: { route: Route }) {
     const translate = new Translate({
       filter: (feature) => feature.get('kind') === 'waypoint',
     })
-    translate.on('translateend', (event: TranslateEvent) => {
+    /* live-sync: commit on every translating frame so globe & side view follow
+       the drag in real time; translateend re-commits the final position */
+    const commitDragged = (event: TranslateEvent) => {
       const feature = event.features.item(0)
       const id = feature.get('waypointId') as string | undefined
       const geometry = feature.getGeometry()
@@ -103,6 +117,29 @@ export default function RouteTopView({ route }: { route: Route }) {
         const [lon, lat] = toLonLat(coords)
         useRoute.getState().updateWaypoint(id, { lon, lat })
       }
+    }
+    /* original-position ghost: appears at drag start, removed on release */
+    const ghost = new Feature(new Point(fromLonLat([7, 61])))
+    ghost.set('kind', 'ghost')
+    translate.on('translatestart', (event: TranslateEvent) => {
+      draggingRef.current = true
+      const feature = event.features.item(0)
+      const geometry = feature.getGeometry()
+      const coords = geometry instanceof Point ? geometry.getCoordinates() : null
+      const ghostGeom = ghost.getGeometry()
+      if (coords && ghostGeom instanceof Point) {
+        ghostGeom.setCoordinates(coords)
+        if (!source.getFeatures().includes(ghost)) source.addFeature(ghost)
+      }
+    })
+    translate.on('translating', (event: TranslateEvent) => {
+      draggingRef.current = true
+      commitDragged(event)
+    })
+    translate.on('translateend', (event: TranslateEvent) => {
+      draggingRef.current = false
+      if (source.getFeatures().includes(ghost)) source.removeFeature(ghost)
+      commitDragged(event)
     })
     map.addInteraction(translate)
 
@@ -144,6 +181,26 @@ export default function RouteTopView({ route }: { route: Route }) {
     if (!source || !map) return
 
     const selectedId = useRoute.getState().selectedWaypointId
+
+    /* mid-drag: refresh only the spline in place. A full clear()/rebuild would
+       orphan the feature Translate is holding and break the drag. */
+    if (draggingRef.current) {
+      const poses: Pose[] = samplePath(route, 160)
+      if (poses.length > 1) {
+        const coords = poses.map((p) => fromLonLat([p.lon, p.lat]))
+        const path = source.getFeatures().find((f) => f.get('kind') === 'path')
+        const geom = path?.getGeometry()
+        if (geom instanceof LineString) {
+          geom.setCoordinates(coords)
+        } else {
+          const created = new Feature(new LineString(coords))
+          created.set('kind', 'path')
+          source.addFeature(created)
+        }
+      }
+      return
+    }
+
     source.clear()
 
     const poses: Pose[] = samplePath(route, 160)

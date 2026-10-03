@@ -46,6 +46,8 @@ export type Pose = {
 
 export const DEFAULT_WAYPOINT_DURATION = 3
 export const DEFAULT_FPS = 30
+/** hard ceiling for camera height — keeps Cesium geometry sane (Earth R ≈ 6.37e6 m) */
+export const MAX_WAYPOINT_HEIGHT_M = 100_000
 
 let seq = 0
 

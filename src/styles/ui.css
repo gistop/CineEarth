@@ -584,6 +584,31 @@
   stroke-width: 1.4;
 }
 
+/* side-view elevation profile — vertical waypoint dragging */
+.ce-minimap-side {
+  touch-action: none;
+}
+.ce-minimap-side .ce-minimap-wp {
+  cursor: ns-resize;
+}
+.ce-minimap-side.is-dragging {
+  cursor: grabbing;
+}
+.ce-minimap-ghost {
+  fill: none;
+  stroke: var(--ce-accent);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+  opacity: 0.55;
+}
+.ce-minimap-drag-tip {
+  font-family: var(--ce-font-mono);
+  font-size: 8.5px;
+  font-weight: 500;
+  fill: var(--ce-accent);
+  text-anchor: middle;
+}
+
 /* ---------- OpenLayers top-view map ---------- */
 
 .ce-olmap-wrap {

@@ -3,7 +3,8 @@ import {
   Viewer,
   ImageryLayer,
   OpenStreetMapImageryProvider,
-  ArcGisMapServerImageryProvider,
+  createWorldImageryAsync,
+  IonWorldImageryStyle,
   Cartographic,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -57,18 +58,16 @@ export default function GlobeViewport() {
       /* user's own ion token (if stored) — verify quietly & enable world terrain */
       void bootstrapIonSettings()
 
-      /* swap OSM placeholder for ArcGIS World Imagery (free, no key needed);
-         keep OSM if the ArcGIS service is unreachable */
-      void ArcGisMapServerImageryProvider.fromUrl(
-        'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
-      )
+      /* swap OSM placeholder for Cesium ion World Imagery (Bing aerial);
+         keep OSM if ion is unreachable (bad token, network blocked) */
+      void createWorldImageryAsync({ style: IonWorldImageryStyle.AERIAL })
         .then((provider) => {
           if (!viewer || viewer.isDestroyed()) return
           const layers = viewer.imageryLayers
           layers.removeAll()
           layers.addImageryProvider(provider)
         })
-        .catch((err) => console.error('[CineEarth] ArcGIS World Imagery failed — keeping OSM', err))
+        .catch((err) => console.error('[CineEarth] ion World Imagery failed — keeping OSM', err))
 
       /* globe taps: target pick mode wins, otherwise click-empty closes drawers */
       const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)

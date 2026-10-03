@@ -3,7 +3,7 @@
 
 import { create } from 'zustand'
 import { createDemoRoute } from './demoRoute'
-import type { Route, TargetPoint, Waypoint } from './types'
+import { MAX_WAYPOINT_HEIGHT_M, type Route, type TargetPoint, type Waypoint } from './types'
 
 interface RouteState {
   route: Route
@@ -32,7 +32,14 @@ export const useRoute = create<RouteState>((set) => ({
     set((s) => ({
       route: {
         ...s.route,
-        waypoints: s.route.waypoints.map((w) => (w.id === id ? { ...w, ...patch } : w)),
+        waypoints: s.route.waypoints.map((w) => {
+          if (w.id !== id) return w
+          const next = { ...w, ...patch }
+          if (typeof patch.height === 'number') {
+            next.height = Math.min(Math.max(0, patch.height), MAX_WAYPOINT_HEIGHT_M)
+          }
+          return next
+        }),
       },
     })),
 }))

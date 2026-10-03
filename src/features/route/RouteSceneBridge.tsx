@@ -87,11 +87,42 @@ export default function RouteSceneBridge() {
   /* ---- playback loop: advance playhead, drive the camera ---- */
   const t0Ref = useRef(0)
 
-  /* pause → resume must restart from the current playhead, not a stale clock */
+  const applyPose = (progress: number) => {
+    const pose = samplePose(useRoute.getState().route, progress)
+    const viewer = getViewer()
+    if (pose && viewer) {
+      viewer.camera.setView({
+        destination: poseToDestination(pose),
+        orientation: {
+          heading: (pose.heading * Math.PI) / 180,
+          pitch: (pose.pitch * Math.PI) / 180,
+          roll: 0,
+        },
+      })
+    }
+  }
+
+  /* pause → resume (and scrub end → resume) must restart from the current
+     playhead, not a stale clock */
   useEffect(
     () =>
       useUI.subscribe((s, prev) => {
-        if (s.playing !== prev.playing) t0Ref.current = 0
+        if (s.playing !== prev.playing || s.scrubbing !== prev.scrubbing) {
+          t0Ref.current = 0
+        }
+      }),
+    [],
+  )
+
+  /* scrubbing (or seeking while paused) drives the camera directly — without
+     this the globe ignores playhead moves until playback resumes */
+  useEffect(
+    () =>
+      useRoute.subscribe((s, prev) => {
+        if (s.progress === prev.progress) return
+        const ui = useUI.getState()
+        if (useExport.getState().status === 'rendering') return
+        if (!ui.playing || ui.scrubbing) applyPose(s.progress)
       }),
     [],
   )
@@ -104,6 +135,8 @@ export default function RouteSceneBridge() {
 
       // the offline renderer owns the camera while exporting
       if (useExport.getState().status === 'rendering') return
+      // user owns the playhead while scrubbing — don't advance, don't overwrite
+      if (useUI.getState().scrubbing) return
       if (!useUI.getState().playing) return
 
       const s = useRoute.getState()
@@ -113,19 +146,7 @@ export default function RouteSceneBridge() {
       if (t0Ref.current === 0) t0Ref.current = now - s.progress * total * 1000
       const progress = (((now - t0Ref.current) / (total * 1000)) % 1 + 1) % 1
       s.setProgress(progress)
-
-      const pose = samplePose(s.route, progress)
-      const viewer = getViewer()
-      if (pose && viewer) {
-        viewer.camera.setView({
-          destination: poseToDestination(pose),
-          orientation: {
-            heading: (pose.heading * Math.PI) / 180,
-            pitch: (pose.pitch * Math.PI) / 180,
-            roll: 0,
-          },
-        })
-      }
+      applyPose(progress)
     }
 
     raf = requestAnimationFrame(tick)
