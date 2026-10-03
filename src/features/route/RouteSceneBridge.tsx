@@ -4,15 +4,27 @@
 //  · route entities: smooth spline polyline + waypoint points on the globe
 
 import { useEffect, useRef } from 'react'
-import { Cartesian3, Color, Entity, PolylineGlowMaterialProperty } from 'cesium'
+import {
+  Cartesian2,
+  Cartesian3,
+  Cartographic,
+  CallbackProperty,
+  Color,
+  CornerType,
+  Entity,
+  PolylineGlowMaterialProperty,
+  sampleTerrainMostDetailed,
+} from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
-import { samplePath, samplePose, totalDuration } from './pathMath'
+import { haversineM, samplePath, samplePose, totalDuration } from './pathMath'
+import { evalReveal, useReveal } from './revealStore'
 import { useRoute } from './routeStore'
 import { useExport } from '../export/exportStore'
 
 const ACCENT = Color.fromCssColorString('#38618c')
 const INK = Color.fromCssColorString('#fbfbfa')
+const GROWTH_GREEN = Color.fromCssColorString('#4ade80')
 
 function poseToDestination(pose: { lon: number; lat: number; height: number }) {
   return Cartesian3.fromDegrees(pose.lon, pose.lat, pose.height)
@@ -20,6 +32,7 @@ function poseToDestination(pose: { lon: number; lat: number; height: number }) {
 
 export default function RouteSceneBridge() {
   const route = useRoute((s) => s.route)
+  const growthLine = useReveal((s) => s.growthLine)
 
   /* ---- route entities: spline polyline + waypoint points ---- */
   useEffect(() => {
@@ -45,12 +58,15 @@ export default function RouteSceneBridge() {
     }
 
     route.waypoints.forEach((w) => {
+      /* selection-aware style: CallbackProperty re-reads the store each frame,
+         so globe highlights stay in sync with top/side views without rebuilds */
+      const isSelected = () => useRoute.getState().selectedWaypointId === w.id
       entities.push(
         viewer.entities.add({
           position: Cartesian3.fromDegrees(w.lon, w.lat, w.height),
           point: {
-            pixelSize: 7,
-            color: INK,
+            pixelSize: new CallbackProperty(() => (isSelected() ? 11 : 7), false),
+            color: new CallbackProperty(() => (isSelected() ? ACCENT : INK), false),
             outlineColor: ACCENT,
             outlineWidth: 2,
           },
@@ -84,6 +100,83 @@ export default function RouteSceneBridge() {
     }
   }, [route])
 
+  /* ---- growth line: thick spline revealed by the AE-style keyframe track ----
+     positions = CallbackProperty → re-evaluated every render frame:
+     reveal% = evalReveal(keys, playhead), arc-length-trimmed to keep growth
+     visually uniform (spline parameter t is NOT uniform in length). */
+  useEffect(() => {
+    const viewer = getViewer()
+    if (!viewer || !growthLine) return
+
+    const poses = samplePath(route, 160)
+    if (poses.length < 2) return
+
+    const cum: number[] = [0]
+    for (let i = 1; i < poses.length; i += 1) {
+      cum.push(
+        cum[i - 1] + haversineM(poses[i - 1].lon, poses[i - 1].lat, poses[i].lon, poses[i].lat),
+      )
+    }
+
+    /* ground track for the 3D beam: it follows TERRAIN, not waypoint/camera heights.
+       Terrain is sampled async — until it resolves the beam rides the ellipsoid,
+       then settles onto the real surface (+halfH so the bottom face sits on it). */
+    const totalLen = cum[cum.length - 1]
+    const halfW = Math.min(9000, Math.max(80, totalLen * 0.003))
+    const halfH = halfW * 0.5
+    const groundPoses = poses.map((p) => ({ lon: p.lon, lat: p.lat, height: halfH }))
+    const provider = viewer.terrainProvider
+    if (provider.availability) {
+      const cartos = poses.map((p) => Cartographic.fromDegrees(p.lon, p.lat))
+      void sampleTerrainMostDetailed(provider, cartos).then(() => {
+        if (viewer.isDestroyed()) return
+        cartos.forEach((c, i) => {
+          if (Number.isFinite(c.height)) groundPoses[i].height = c.height + halfH
+        })
+      })
+    }
+
+    // base layer: dim full-length guide — visible the instant the button is pressed,
+    // even at reveal 0% (otherwise a playhead at t=0 shows nothing and the toggle looks dead)
+    const entities: Entity[] = [
+      viewer.entities.add({
+        polyline: {
+          positions: poses.map(poseToDestination),
+          width: 10,
+          clampToGround: true,
+          material: new PolylineGlowMaterialProperty({
+            glowPower: 0.2,
+            color: GROWTH_GREEN.withAlpha(0.18),
+          }),
+        },
+      }),
+      // growth layer: solid rectangular beam riding the GROUND (terrain-sampled
+      // heights), revealed by the keyframe track at the playhead
+      viewer.entities.add({
+        polylineVolume: {
+          positions: new CallbackProperty(() => {
+            const reveal = evalReveal(useReveal.getState().keys, useRoute.getState().progress) / 100
+            return cutPathByLength(groundPoses, cum, reveal)
+          }, false),
+          shape: [
+            new Cartesian2(-halfW, -halfH),
+            new Cartesian2(halfW, -halfH),
+            new Cartesian2(halfW, halfH),
+            new Cartesian2(-halfW, halfH),
+          ],
+          cornerType: CornerType.BEVELED,
+          material: GROWTH_GREEN,
+        },
+      }),
+    ]
+
+    return () => {
+      const live = getViewer()
+      if (live !== viewer || viewer.isDestroyed()) return
+      entities.forEach((e) => viewer.entities.remove(e))
+    }
+  }, [growthLine, route])
+
   /* ---- playback loop: advance playhead, drive the camera ---- */
   const t0Ref = useRef(0)
 
@@ -110,6 +203,10 @@ export default function RouteSceneBridge() {
         if (s.playing !== prev.playing || s.scrubbing !== prev.scrubbing) {
           t0Ref.current = 0
         }
+        // unlock → snap the camera back onto the playhead pose immediately
+        if (prev.cameraLocked && !s.cameraLocked) {
+          applyPose(useRoute.getState().progress)
+        }
       }),
     [],
   )
@@ -122,7 +219,7 @@ export default function RouteSceneBridge() {
         if (s.progress === prev.progress) return
         const ui = useUI.getState()
         if (useExport.getState().status === 'rendering') return
-        if (!ui.playing || ui.scrubbing) applyPose(s.progress)
+        if ((!ui.playing || ui.scrubbing) && !ui.cameraLocked) applyPose(s.progress)
       }),
     [],
   )
@@ -146,7 +243,8 @@ export default function RouteSceneBridge() {
       if (t0Ref.current === 0) t0Ref.current = now - s.progress * total * 1000
       const progress = (((now - t0Ref.current) / (total * 1000)) % 1 + 1) % 1
       s.setProgress(progress)
-      applyPose(progress)
+      // locked camera: playhead advances (growth keeps growing), viewpoint holds
+      if (!useUI.getState().cameraLocked) applyPose(progress)
     }
 
     raf = requestAnimationFrame(tick)
@@ -154,4 +252,36 @@ export default function RouteSceneBridge() {
   }, [])
 
   return null
+}
+
+/** trim dense spline samples to the first `frac` (0..1) of total arc length */
+function cutPathByLength(
+  poses: { lon: number; lat: number; height: number }[],
+  cum: number[],
+  frac: number,
+): Cartesian3[] {
+  if (frac <= 0.001) {
+    // degenerate two-point segment at the start — invisible but safe for Cesium
+    const p = poseToDestination(poses[0])
+    return [p, p.clone()]
+  }
+  if (frac >= 0.999) return poses.map(poseToDestination)
+
+  const target = cum[cum.length - 1] * frac
+  let i = 1
+  while (i < cum.length - 1 && cum[i] < target) i += 1
+  const span = cum[i] - cum[i - 1]
+  const local = span > 0 ? (target - cum[i - 1]) / span : 1
+  const a = poses[i - 1]
+  const b = poses[i]
+
+  const out = poses.slice(0, i).map(poseToDestination)
+  out.push(
+    Cartesian3.fromDegrees(
+      a.lon + (b.lon - a.lon) * local,
+      a.lat + (b.lat - a.lat) * local,
+      a.height + (b.height - a.height) * local,
+    ),
+  )
+  return out
 }

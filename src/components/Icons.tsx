@@ -13,6 +13,20 @@ const base = (size: number) => ({
   strokeLinejoin: 'round' as const,
 })
 
+export const GrowthIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M4 19l5-6 4 4 6.4-10" />
+    <circle cx="20" cy="6" r="1.7" />
+  </svg>
+)
+
+export const LockIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <rect x="5.5" y="10.5" width="13" height="9.5" rx="2" />
+    <path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" />
+  </svg>
+)
+
 export const SlidersIcon = ({ size = 18, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <path d="M4 8h10M18 8h2M4 16h4M12 16h8" />
@@ -128,5 +142,19 @@ export const RenderIcon = ({ size = 16, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5" />
     <path d="M5 17.5v1A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-1" />
+  </svg>
+)
+
+export const SunIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" />
+  </svg>
+)
+
+export const ClockIcon = ({ size = 15, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
   </svg>
 )

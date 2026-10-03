@@ -17,6 +17,10 @@ interface UIState {
   playing: boolean
   /** user is dragging the timeline playhead — freezes the playback clock */
   scrubbing: boolean
+  /** freeze the camera at its current view — the playhead keeps driving growth */
+  cameraLocked: boolean
+  /** sun & time-of-day panel (globe lighting follows the Cesium clock) */
+  sunOpen: boolean
 
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
@@ -26,6 +30,8 @@ interface UIState {
   setPreviewMode: (on: boolean) => void
   setPlaying: (p: boolean) => void
   setScrubbing: (s: boolean) => void
+  setCameraLocked: (on: boolean) => void
+  toggleSunPanel: (open?: boolean) => void
 }
 
 export const useUI = create<UIState>((set) => ({
@@ -37,6 +43,8 @@ export const useUI = create<UIState>((set) => ({
   previewMode: false,
   playing: false,
   scrubbing: false,
+  cameraLocked: false,
+  sunOpen: false,
 
   toggleDrawer: (open) => set((s) => ({ drawerOpen: open ?? !s.drawerOpen })),
   setDrawerTab: (tab) => set({ drawerTab: tab, drawerOpen: true }),
@@ -48,4 +56,6 @@ export const useUI = create<UIState>((set) => ({
   setPreviewMode: (on) => set({ previewMode: on }),
   setPlaying: (p) => set({ playing: p }),
   setScrubbing: (s) => set({ scrubbing: s }),
+  setCameraLocked: (on) => set({ cameraLocked: on }),
+  toggleSunPanel: (open) => set((s) => ({ sunOpen: open ?? !s.sunOpen })),
 }))

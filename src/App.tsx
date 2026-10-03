@@ -5,6 +5,8 @@ import Timeline from './components/Timeline'
 import PreviewBadge from './components/PreviewBadge'
 import RouteDrawer from './features/route/RouteDrawer'
 import RouteSceneBridge from './features/route/RouteSceneBridge'
+import SunPanel from './features/settings/SunPanel'
+import { useReveal } from './features/route/revealStore'
 import { useUI } from './store/ui'
 import './styles/ui.css'
 
@@ -12,7 +14,7 @@ export default function App() {
   const previewMode = useUI((s) => s.previewMode)
   const timelineExpanded = useUI((s) => s.timelineExpanded)
 
-  /* Esc: exit preview → close drawers · T: tools · R: route · Space: play/pause */
+  /* Esc: exit preview → close panels · T: tools · R: route · G: growth · C: camera lock · S: sun · Space: play/pause */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
@@ -22,12 +24,20 @@ export default function App() {
       if (e.key === 'Escape') {
         if (s.targetPickMode) s.setTargetPickMode(false)
         else if (s.previewMode) s.setPreviewMode(false)
+        else if (s.sunOpen) s.toggleSunPanel(false)
         else if (s.rightDrawerOpen) s.toggleRightDrawer(false)
         else if (s.drawerOpen) s.toggleDrawer(false)
       } else if (e.key.toLowerCase() === 't' && !s.previewMode) {
         s.toggleDrawer()
       } else if (e.key.toLowerCase() === 'r' && !s.previewMode) {
         s.toggleRightDrawer()
+      } else if (e.key.toLowerCase() === 'g' && !s.previewMode) {
+        const r = useReveal.getState()
+        r.setGrowthLine(!r.growthLine)
+      } else if (e.key.toLowerCase() === 'c' && !s.previewMode) {
+        s.setCameraLocked(!s.cameraLocked)
+      } else if (e.key.toLowerCase() === 's' && !s.previewMode) {
+        s.toggleSunPanel()
       } else if (e.code === 'Space' && tag !== 'BUTTON') {
         e.preventDefault()
         s.setPlaying(!s.playing)
@@ -51,6 +61,7 @@ export default function App() {
         <>
           <Drawer />
           <RouteDrawer />
+          <SunPanel />
           <Timeline />
         </>
       )}

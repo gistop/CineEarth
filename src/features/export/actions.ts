@@ -44,6 +44,8 @@ export async function renderRouteVideo(): Promise<void> {
   }
 
   const { route } = useRoute.getState()
+  // WYSIWYG: a locked camera exports a locked-camera video (growth still animates)
+  const camLocked = useUI.getState().cameraLocked
   if (route.waypoints.length < 2) {
     useExport.getState().finish('航线至少需要 2 个航点')
     return
@@ -58,10 +60,16 @@ export async function renderRouteVideo(): Promise<void> {
 
   try {
     const path: RecordPath = {
-      begin: () => { const p = samplePose(route, 0); if (p) applyPose(p) },
+      begin: () => {
+        const p = samplePose(route, 0)
+        if (p && !camLocked) applyPose(p)
+        // store progress drives the growth line too (CallbackProperty reads it)
+        useRoute.getState().setProgress(0)
+      },
       applyProgress: (progress) => {
         const p = samplePose(route, progress)
-        if (p) applyPose(p)
+        if (p && !camLocked) applyPose(p)
+        useRoute.getState().setProgress(progress)
       },
       frameCount: Math.max(2, Math.round(totalDuration(route) * route.fps)),
       fps: route.fps,

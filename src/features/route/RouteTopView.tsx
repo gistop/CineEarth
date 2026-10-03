@@ -2,6 +2,7 @@
 // Ported from CTEarth RoamTopView, adapted to CineEarth stores & palette:
 //  · OSM basemap, muted to match the ink-on-paper look
 //  · spline polyline + numbered waypoints, click to select
+//  · click EMPTY map = append a waypoint (camera keyframe) at that spot
 //  · waypoints are DRAGGABLE (Translate) — live-commits lon/lat while dragging,
 //    so globe & side view follow in real time; spline refreshes in place mid-drag
 //  · playhead marker follows the camera each frame (reads store, no re-render)
@@ -149,7 +150,12 @@ export default function RouteTopView({ route }: { route: Route }) {
         const id = hit.get('waypointId') as string | undefined
         const { selectedWaypointId, selectWaypoint } = useRoute.getState()
         selectWaypoint(id && id !== selectedWaypointId ? id : null)
+        return
       }
+      if (hit) return // clicked the path/ghost — ignore
+      /* empty map click — append a camera keyframe here */
+      const [lon, lat] = toLonLat(event.coordinate)
+      useRoute.getState().addWaypoint(lon, lat)
     })
 
     const head = new Feature(new Point(fromLonLat([7, 61])))

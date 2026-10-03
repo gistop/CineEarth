@@ -1,6 +1,7 @@
 import { useUI, type DrawerTab } from '../store/ui'
 import { LayersIcon, FilmIcon, TuneIcon, FolderIcon, CloseIcon } from './Icons'
 import IonSettingsPanel from '../features/settings/IonSettingsPanel'
+import SceneSettingsPanel from '../features/settings/SceneSettingsPanel'
 
 const TABS: { id: DrawerTab; label: string; Icon: typeof LayersIcon }[] = [
   { id: 'layers', label: 'Layers', Icon: LayersIcon },
@@ -21,15 +22,7 @@ const DEMO_SHOTS = [
   { name: 'Flyby — Zermatt valley', dur: '0:10' },
 ]
 
-const DEMO_PROPS = [
-  'Latitude / Longitude / Altitude',
-  'Heading',
-  'Tilt',
-  'Roll',
-  'Field of view',
-  'Sun & lighting time',
-  'Layer opacity',
-]
+
 
 /**
  * Overlay drawer — floats on the globe, bottom stops above the timeline.
@@ -115,19 +108,7 @@ function ShotsPanel() {
 }
 
 function PropsPanel() {
-  return (
-    <div className="ce-stack">
-      <p className="ce-hint">Attributes animated on the timeline</p>
-      {DEMO_PROPS.map((p, i) => (
-        <div key={p} className="ce-row">
-          <input type="checkbox" defaultChecked={i < 2} aria-label={p} />
-          <div className="ce-row-main">
-            <span className="ce-row-name">{p}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
+  return <SceneSettingsPanel />
 }
 
 function AssetsPanel() {

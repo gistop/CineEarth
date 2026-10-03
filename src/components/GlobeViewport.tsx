@@ -15,6 +15,7 @@ import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { setViewer } from '../cesium/viewerRegistry'
 import { bootstrapIonSettings } from '../features/settings/ionTerrain'
+import { syncSceneSettings } from '../features/settings/sceneSettings'
 
 /**
  * The globe is an imperative island:
@@ -49,6 +50,9 @@ export default function GlobeViewport() {
         creditContainer: creditRef.current ?? undefined,
       })
       setViewer(viewer)
+
+      /* scene render switches (depth test, atmosphere, fog) — store → viewer */
+      syncSceneSettings()
 
       /* Matterhorn opening view — framed on the demo fly-around (Swiss–Italian Alps) */
       viewer.camera.setView({
