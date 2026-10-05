@@ -26,6 +26,7 @@ import DoubleClickZoom from 'ol/interaction/DoubleClickZoom.js'
 import { fromLonLat, toLonLat } from 'ol/proj.js'
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from 'ol/style.js'
 import type { TranslateEvent } from 'ol/interaction/Translate.js'
+import type { MapBrowserEvent } from 'ol'
 import { samplePath, samplePose } from './pathMath'
 import { useRoute } from './routeStore'
 import { useUI } from '../../store/ui'
@@ -182,8 +183,11 @@ export default function RouteTopView({ route }: { route: Route }) {
     const dragPan =
       map.getInteractions().getArray().find((i): i is DragPan => i instanceof DragPan) ?? null
     let panSuppressed = false
-    map.on('pointerdown', (event) => {
-      const hit = map.forEachFeatureAtPixel(event.pixel, (f) => f, { hitTolerance: HIT_TOLERANCE })
+    /* pointerdown/up/cancel are missing from ol's Map.on() type union —
+       addEventListener is the runtime-identical, loosely-typed escape hatch */
+    map.addEventListener('pointerdown', (event) => {
+      const e = event as MapBrowserEvent<PointerEvent>
+      const hit = map.forEachFeatureAtPixel(e.pixel, (f) => f, { hitTolerance: HIT_TOLERANCE })
       panSuppressed = hit?.get('kind') === 'waypoint'
       if (panSuppressed) dragPan?.setActive(false)
     })
@@ -193,8 +197,8 @@ export default function RouteTopView({ route }: { route: Route }) {
         panSuppressed = false
       }
     }
-    map.on('pointerup', restorePan)
-    map.on('pointercancel', restorePan)
+    map.addEventListener('pointerup', restorePan)
+    map.addEventListener('pointercancel', restorePan)
 
     map.on('click', (event) => {
       const hit = map.forEachFeatureAtPixel(event.pixel, (f) => f, { hitTolerance: HIT_TOLERANCE })
