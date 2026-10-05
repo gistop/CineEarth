@@ -3,8 +3,6 @@ import {
   Viewer,
   ImageryLayer,
   OpenStreetMapImageryProvider,
-  createWorldImageryAsync,
-  IonWorldImageryStyle,
   Cartographic,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -59,19 +57,10 @@ export default function GlobeViewport() {
         destination: Cartesian3.fromDegrees(7.6586, 45.9763, 60_000),
       })
 
-      /* user's own ion token (if stored) — verify quietly & enable world terrain */
+      /* ion bridge: stored token → terrain → imagery. All three live in
+         ionTerrain.ts so that changing the token rebuilds both the terrain
+         provider and the imagery layer (credits are baked in at creation). */
       void bootstrapIonSettings()
-
-      /* swap OSM placeholder for Cesium ion World Imagery (Bing aerial);
-         keep OSM if ion is unreachable (bad token, network blocked) */
-      void createWorldImageryAsync({ style: IonWorldImageryStyle.AERIAL })
-        .then((provider) => {
-          if (!viewer || viewer.isDestroyed()) return
-          const layers = viewer.imageryLayers
-          layers.removeAll()
-          layers.addImageryProvider(provider)
-        })
-        .catch((err) => console.error('[CineEarth] ion World Imagery failed — keeping OSM', err))
 
       /* globe taps: target pick mode wins, otherwise click-empty closes drawers */
       const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
@@ -126,7 +115,7 @@ export default function GlobeViewport() {
   return (
     <>
       <div ref={hostRef} className="ce-globe" />
-      {/* attribution lives here so panels never cover it */}
+      {/* ion imagery/terrain attribution — native-style strip, left-aligned above the timeline */}
       <div ref={creditRef} className="ce-credits" />
     </>
   )
