@@ -176,3 +176,10 @@ export const MoveIcon = ({ size = 14, className }: P) => (
     <path d="M12 3.5v17M3.5 12h17M12 3.5l-2.4 2.4M12 3.5l2.4 2.4M12 20.5l-2.4-2.4M12 20.5l2.4-2.4M3.5 12l2.4-2.4M3.5 12l2.4 2.4M20.5 12l-2.4-2.4M20.5 12l-2.4 2.4" />
   </svg>
 )
+
+export const PinIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M12 21s-6.5-5.4-6.5-10.2A6.5 6.5 0 0118.5 10.8C18.5 15.6 12 21 12 21z" />
+    <circle cx="12" cy="10.5" r="2.2" />
+  </svg>
+)

@@ -2,12 +2,13 @@
 // Ported from CTEarth RoamTopView, adapted to CineEarth stores & palette:
 //  · OSM basemap, muted to match the ink-on-paper look
 //  · spline polyline + numbered waypoints, click to select
-//  · click EMPTY map = append a waypoint (camera keyframe) at that spot
+//  · click EMPTY map = append a waypoint (camera keyframe) at that spot —
+//    only while the toolbar's add-mode toggle is ON (off = browse/select)
 //  · waypoints are DRAGGABLE (Translate) — live-commits lon/lat while dragging,
 //    so globe & side view follow in real time; spline refreshes in place mid-drag
 //  · playhead marker follows the camera each frame (reads store, no re-render)
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Cartesian2, Cartesian3, Cartographic, Math as CesiumMath } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import Feature from 'ol/Feature.js'
@@ -28,7 +29,7 @@ import type { TranslateEvent } from 'ol/interaction/Translate.js'
 import { samplePath, samplePose } from './pathMath'
 import { useRoute } from './routeStore'
 import { useUI } from '../../store/ui'
-import { MinusIcon, PlusIcon, TargetIcon } from '../../components/Icons'
+import { MinusIcon, PlusIcon, TargetIcon, PinIcon } from '../../components/Icons'
 import type { Pose, Route } from './types'
 
 /* palette — mirrors tokens.css (canvas styles can't read CSS vars) */
@@ -81,6 +82,16 @@ export default function RouteTopView({ route }: { route: Route }) {
   const headFeatureRef = useRef<Feature<Point> | null>(null)
   const draggingRef = useRef(false)
   const syncToGlobeRef = useRef<(() => void) | null>(null)
+
+  /* add-mode toggle — click empty map appends waypoints only while ON.
+     The OL click handler closes over a ref (its effect never re-runs);
+     the state exists purely to re-render the button's pressed look. */
+  const [addMode, setAddMode] = useState(true)
+  const addModeRef = useRef(true)
+  const toggleAddMode = () => {
+    addModeRef.current = !addModeRef.current
+    setAddMode(addModeRef.current)
+  }
 
   const nudgeZoom = (delta: number) => {
     const view = mapRef.current?.getView()
@@ -194,6 +205,7 @@ export default function RouteTopView({ route }: { route: Route }) {
         return
       }
       if (hit) return // clicked the path/ghost — ignore
+      if (!addModeRef.current) return // add mode off — browse/select only
       /* empty map click — append a camera keyframe here */
       const [lon, lat] = toLonLat(event.coordinate)
       useRoute.getState().addWaypoint(lon, lat)
@@ -359,6 +371,20 @@ export default function RouteTopView({ route }: { route: Route }) {
       <figcaption>
         <span>Top view</span>
         <span className="ce-minimap-tools">
+          <button
+            type="button"
+            className={addMode ? 'is-on' : ''}
+            title={
+              addMode
+                ? 'Add mode ON — click empty map to append waypoints. Click to pause.'
+                : 'Add mode OFF — clicking the map adds nothing. Click to enable.'
+            }
+            aria-label="Toggle click-to-add waypoints"
+            aria-pressed={addMode}
+            onClick={toggleAddMode}
+          >
+            <PinIcon size={12} />
+          </button>
           <button
             type="button"
             title="Sync — match the main globe view"

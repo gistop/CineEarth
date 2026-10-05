@@ -8,6 +8,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { haversineM, samplePath, samplePose } from './pathMath'
 import { useRoute } from './routeStore'
 import { MAX_WAYPOINT_HEIGHT_M, type Route } from './types'
+import { ExpandIcon, MinusIcon, PlusIcon } from '../../components/Icons'
 
 const W = 300
 const H = 110
@@ -40,11 +41,33 @@ export default function RouteSideView({ route }: { route: Route }) {
   const dragRangeRef = useRef<{ min: number; max: number } | null>(null)
   /** drag-start height — anchors the ghost dot at the original position */
   const dragGhostHRef = useRef<number | null>(null)
-  /** viewport pan state — empty-area drag moves the visible height window */
-  const panRef = useRef<{ y: number; min: number; max: number } | null>(null)
-  const [view, setView] = useState<{ min: number; max: number } | null>(null)
+  /** viewport pan state — empty-area drag pans BOTH axes:
+      x = along-track distance window, y = altitude window */
+  const panRef = useRef<{
+    px: number
+    py: number
+    dMin: number
+    dMax: number
+    hMin: number
+    hMax: number
+  } | null>(null)
+  const [view, setView] = useState<{
+    dMin: number
+    dMax: number
+    hMin: number
+    hMax: number
+  } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [panning, setPanning] = useState(false)
+  /** true while a two-pointer pinch zoom is active (cursor hint) */
+  const [zooming, setZooming] = useState(false)
+  /** two-pointer pinch (tablet) — distance ratio zooms, midpoint drift pans */
+  const pinchRef = useRef<{ dist: number; cx: number; dMin: number; dMax: number } | null>(null)
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>())
+  /** stays true until the user pans y explicitly — while true, y auto-fits
+      the VISIBLE stretch, so zooming into a local segment gains vertical
+      resolution instead of squashing the dots into a band */
+  const yAutoRef = useRef(true)
 
   const geometry = useMemo(() => {
     const poses = samplePath(route, 140)
@@ -65,12 +88,30 @@ export default function RouteSideView({ route }: { route: Route }) {
           Recomputing from live heights created a feedback loop: pointer offset
           × maxH → commit → maxH grows → same offset maps even higher → runaway
           (heights hit billions of metres and broke Cesium geometry).
-       2. the user-panned viewport (empty-area drag).
-       3. auto-fit: 0 .. maxH × 1.15. */
-    const range =
-      dragRangeRef.current ?? view ?? { min: 0, max: Math.max(...pts.map((p) => p.h), 100) * 1.15 }
-    const { min: hMin, max: hMax } = range
-    const sx = (d: number) => PAD_X + (d / Math.max(total, 1e-6)) * (W - PAD_X * 2)
+       2. the user-panned y window (only once the user panned y explicitly).
+       3. auto-fit — of the VISIBLE stretch once zoomed/panned, so local
+          editing gains full vertical resolution; the full track otherwise.
+       The x-axis (along-track window) is either the panned/zoomed viewport or
+       the full track — waypoints & the playhead map through the same windows. */
+    const xRange = view ? { min: view.dMin, max: view.dMax } : { min: 0, max: total }
+    let yRange = dragRangeRef.current ?? null
+    if (!yRange && view && !yAutoRef.current) yRange = { min: view.hMin, max: view.hMax }
+    if (!yRange) {
+      const vis = pts.filter((p) => p.d >= xRange.min && p.d <= xRange.max)
+      const src = vis.length >= 2 ? vis : pts
+      let lo = Math.min(...src.map((p) => p.h))
+      let hi = Math.max(...src.map((p) => p.h))
+      if (hi - lo < 50) {
+        const mid = (hi + lo) / 2
+        lo = mid - 25
+        hi = mid + 25
+      }
+      const pad = (hi - lo) * 0.15
+      yRange = { min: Math.max(0, lo - pad), max: hi + pad }
+    }
+    const { min: hMin, max: hMax } = yRange
+    const sx = (d: number) =>
+      PAD_X + ((d - xRange.min) / Math.max(xRange.max - xRange.min, 1e-6)) * (W - PAD_X * 2)
     const sy = (h: number) =>
       H - PAD_BOTTOM - ((h - hMin) / (hMax - hMin)) * (H - PAD_BOTTOM - PAD_TOP)
 
@@ -83,7 +124,16 @@ export default function RouteSideView({ route }: { route: Route }) {
       return pts[i0].d + (pts[i0 + 1].d - pts[i0].d) * (x - i0)
     }
 
-    return { pts, total, hMin, hMax, sx, sy, distanceAt }
+    /* zoom clamps: stop zooming in once waypoints average ≥ 40 px apart on
+       screen (nothing left to gain), allow a little overscroll out */
+    const n = route.waypoints.length
+    const minSpan =
+      n > 1
+        ? Math.min(Math.max(((total / (n - 1)) * (W - PAD_X * 2)) / 40, 1), total)
+        : Math.max(total / 50, 1)
+    const maxSpan = total * 1.6
+
+    return { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt }
   }, [route, view])
 
   /* waypoint dot positions in svg space (x by along-track distance, y by height) */
@@ -101,11 +151,14 @@ export default function RouteSideView({ route }: { route: Route }) {
   /* data changed (not mid-drag) — drop the panned viewport, auto-fit again.
      Must run before the early return below (hooks-order rule). */
   useEffect(() => {
-    if (!dragIdRef.current && !panRef.current) setView(null)
+    if (!dragIdRef.current && !panRef.current) {
+      setView(null)
+      yAutoRef.current = true
+    }
   }, [route])
 
   if (!geometry) return null
-  const { pts, total, hMin, hMax, sx, sy, distanceAt } = geometry
+  const { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt } = geometry
 
   const d = pts
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${sx(p.d).toFixed(1)} ${sy(p.h).toFixed(1)}`)
@@ -128,9 +181,49 @@ export default function RouteSideView({ route }: { route: Route }) {
     return { x: p.x, y: p.y }
   }
 
+  /** zoom the along-track window around anchorD — the anchor's data position
+      stays at the same screen x after the zoom. factor < 1 = zoom in. */
+  const zoomX = (anchorD: number, factor: number, dMin0: number, dMax0: number) => {
+    const span0 = Math.max(dMax0 - dMin0, 1e-6)
+    const span = Math.min(Math.max(span0 * factor, minSpan), maxSpan)
+    const s = span / span0
+    let dMin = anchorD - (anchorD - dMin0) * s
+    dMin = Math.max(-span / 2, Math.min(dMin, total - span / 2))
+    return { dMin, dMax: dMin + span }
+  }
+
+  /** y window to persist through a zoom/pan: the user-panned one if any,
+      otherwise the auto-fitted current one (re-fit happens in the memo) */
+  const yWindow = () =>
+    view && !yAutoRef.current
+      ? { min: view.hMin, max: view.hMax }
+      : { min: geometry.hMin, max: geometry.hMax }
+
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     const p = toSvgPoint(e.clientX, e.clientY)
     if (!p) return
+    pointersRef.current.set(e.pointerId, p)
+
+    /* second finger lands → pinch zoom (tablet); cancel any drag/pan in flight */
+    if (pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()]
+      dragIdRef.current = null
+      dragRangeRef.current = null
+      dragGhostHRef.current = null
+      setDragId(null)
+      panRef.current = null
+      setPanning(false)
+      pinchRef.current = {
+        dist: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1e-3),
+        cx: (a.x + b.x) / 2,
+        dMin: xRange.min,
+        dMax: xRange.max,
+      }
+      setZooming(true)
+      svgRef.current?.setPointerCapture(e.pointerId)
+      return
+    }
+    if (e.button !== 0) return
     let best: { id: string; dist: number } | null = null
     for (const dot of dots) {
       const dist = Math.hypot(dot.x - p.x, dot.y - p.y)
@@ -148,17 +241,47 @@ export default function RouteSideView({ route }: { route: Route }) {
       if (selectedWaypointId !== best.id) selectWaypoint(best.id)
       return
     }
-    /* empty area — pan the height viewport: the curve follows the pointer,
-       the axes stay put, the y-tick numbers re-label live */
+    /* empty area — pan the viewport on BOTH axes: the curve follows the
+       pointer in any direction, the axes stay put, ticks re-label live */
     e.preventDefault()
     svgRef.current?.setPointerCapture(e.pointerId)
-    panRef.current = { y: p.y, min: geometry.hMin, max: geometry.hMax }
+    panRef.current = {
+      px: p.x,
+      py: p.y,
+      dMin: xRange.min,
+      dMax: xRange.max,
+      hMin: geometry.hMin,
+      hMax: geometry.hMax,
+    }
     setPanning(true)
   }
 
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     const p = toSvgPoint(e.clientX, e.clientY)
     if (!p) return
+    if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, p)
+
+    /* ---- pinch zoom (two pointers) ---- */
+    const pinch = pinchRef.current
+    if (pinch) {
+      const [a, b] = [...pointersRef.current.values()]
+      if (a && b) {
+        const innerW = W - PAD_X * 2
+        const dist = Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1e-3)
+        const cx = (a.x + b.x) / 2
+        /* anchor = midpoint's data position; spread fingers = zoom in */
+        const anchorD = pinch.dMin + ((pinch.cx - PAD_X) / innerW) * (pinch.dMax - pinch.dMin)
+        const { dMin, dMax } = zoomX(anchorD, pinch.dist / dist, pinch.dMin, pinch.dMax)
+        /* midpoint drift pans alongside the zoom, like a map pinch */
+        const span = dMax - dMin
+        const dd = (-(cx - pinch.cx) / innerW) * span
+        const dMinP = Math.max(-span / 2, Math.min(dMin + dd, total - span / 2))
+        const y = yWindow()
+        setView({ dMin: dMinP, dMax: dMinP + span, hMin: y.min, hMax: y.max })
+      }
+      return
+    }
+
     const id = dragIdRef.current
     if (id) {
       const innerH = H - PAD_BOTTOM - PAD_TOP
@@ -171,18 +294,33 @@ export default function RouteSideView({ route }: { route: Route }) {
     const pan = panRef.current
     if (pan) {
       const innerH = H - PAD_BOTTOM - PAD_TOP
-      const span = pan.max - pan.min
-      /* pointer down dy → curve follows down → sy(h) grows → min grows
-         (viewport slides UP the height axis). Sign matters: content chases
-         the pointer, exactly like panning a chart in Excel/Origin. */
-      const dh = ((p.y - pan.y) / innerH) * span
-      const min = Math.max(-span, Math.min(pan.min + dh, MAX_WAYPOINT_HEIGHT_M * 2 - span))
-      setView({ min, max: min + span })
+      const innerW = W - PAD_X * 2
+      const hSpan = pan.hMax - pan.hMin
+      const dSpan = pan.dMax - pan.dMin
+      /* content chases the pointer, both axes (Excel/Origin chart panning):
+         dy down → y window slides up; dx right → x window slides left */
+      const dh = ((p.y - pan.py) / innerH) * hSpan
+      /* an intentional vertical pan takes y out of auto-fit; until then y
+         re-fits the visible stretch automatically */
+      if (Math.abs(p.y - pan.py) > 3) yAutoRef.current = false
+      const hMin = Math.max(-hSpan, Math.min(pan.hMin + dh, MAX_WAYPOINT_HEIGHT_M * 2 - hSpan))
+      const dd = (-(p.x - pan.px) / innerW) * dSpan
+      /* allow half a window of overscroll on each side of the track */
+      const dMin = Math.max(-dSpan / 2, Math.min(pan.dMin + dd, total - dSpan / 2))
+      setView({ dMin, dMax: dMin + dSpan, hMin, hMax: hMin + hSpan })
     }
   }
 
   const endDrag = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (!dragIdRef.current && !panRef.current) return
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size < 2 && pinchRef.current) {
+      pinchRef.current = null
+      setZooming(false)
+    }
+    if (!dragIdRef.current && !panRef.current) {
+      svgRef.current?.releasePointerCapture?.(e.pointerId)
+      return
+    }
     dragIdRef.current = null
     dragRangeRef.current = null
     dragGhostHRef.current = null
@@ -191,6 +329,32 @@ export default function RouteSideView({ route }: { route: Route }) {
     setPanning(false)
     svgRef.current?.releasePointerCapture?.(e.pointerId)
   }
+
+  /* ---- toolbar zoom buttons ---- */
+
+  /** zoom by factor around the SELECTED waypoint (centred in the window) or
+      the viewport centre when nothing is selected; factor < 1 = zoom in */
+  const zoomBy = (factor: number) => {
+    let anchorD = (xRange.min + xRange.max) / 2
+    const selIdx = route.waypoints.findIndex((w) => w.id === selectedId)
+    if (selIdx >= 0) anchorD = distanceAt(fractionOfWaypoint(route, selIdx))
+    const { dMin, dMax } = zoomX(anchorD, factor, xRange.min, xRange.max)
+    const span = dMax - dMin
+    /* re-centre on the anchor, clamped to the overscroll bounds */
+    let dm = anchorD - span / 2
+    dm = Math.max(-span / 2, Math.min(dm, total - span / 2))
+    const y = yWindow()
+    setView({ dMin: dm, dMax: dm + span, hMin: y.min, hMax: y.max })
+  }
+
+  const fitView = () => {
+    setView(null)
+    yAutoRef.current = true
+  }
+
+  const spanNow = xRange.max - xRange.min
+  const zoomInMaxed = spanNow <= minSpan * 1.001
+  const zoomOutMaxed = spanNow >= maxSpan * 0.999
 
   const dragDot = dragId ? dots.find((dot) => dot.id === dragId) : null
 
@@ -203,17 +367,48 @@ export default function RouteSideView({ route }: { route: Route }) {
 
   return (
     <figure className="ce-minimap">
-      <figcaption>Side view · elevation</figcaption>
+      <figcaption>
+        <span>Side view · elevation</span>
+        <span className="ce-minimap-tools">
+          <button
+            type="button"
+            title="Fit route (reset zoom and pan)"
+            aria-label="Fit route"
+            disabled={!view}
+            onClick={fitView}
+          >
+            <ExpandIcon size={12} />
+          </button>
+          <button
+            type="button"
+            title="Zoom in"
+            aria-label="Zoom in"
+            disabled={zoomInMaxed}
+            onClick={() => zoomBy(0.5)}
+          >
+            <PlusIcon size={12} />
+          </button>
+          <button
+            type="button"
+            title="Zoom out"
+            aria-label="Zoom out"
+            disabled={zoomOutMaxed}
+            onClick={() => zoomBy(2)}
+          >
+            <MinusIcon size={12} />
+          </button>
+        </span>
+      </figcaption>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Route elevation profile — drag waypoints vertically to change altitude, drag empty space to pan, double-click to reset"
-        title="Drag a waypoint vertically to set altitude · drag empty space to pan · double-click to reset view"
+        aria-label="Route elevation profile — drag waypoints vertically to change altitude, drag empty space to pan, zoom with the toolbar buttons or pinch, double-click to reset"
         className={[
           'ce-minimap-side',
           dragId ? 'is-dragging' : '',
           panning ? 'is-panning' : '',
+          zooming || pinchRef.current ? 'is-zooming' : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -221,8 +416,13 @@ export default function RouteSideView({ route }: { route: Route }) {
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        onDoubleClick={() => setView(null)}
+        onDoubleClick={fitView}
       >
+        <title>
+          Drag a waypoint vertically to set altitude · drag empty space to pan (left/right =
+          along-track, up/down = altitude) · zoom with the toolbar buttons or pinch · double-click
+          to reset
+        </title>
         <line className="ce-minimap-ground" x1={PAD_X} y1={sy(0)} x2={W - PAD_X} y2={sy(0)} />
         {ticks.map((h) => (
           <g key={h}>
@@ -256,7 +456,9 @@ export default function RouteSideView({ route }: { route: Route }) {
             {fmtAlt(dragDot.height)}
           </text>
         )}
-        <text className="ce-minimap-axis" x={PAD_X} y={H - 5}>{fmtKm(total)}</text>
+        <text className="ce-minimap-axis" x={PAD_X} y={H - 5}>
+          {fmtKm(Math.max(0, xRange.min))} – {fmtKm(Math.min(total, xRange.max))}
+        </text>
       </svg>
     </figure>
   )

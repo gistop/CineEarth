@@ -43,23 +43,28 @@ export default function RouteDrawer() {
         </span>
       </header>
 
-      <div className="ce-drawer-body">
-        <RouteTopView route={route} />
-        <RouteSideView route={route} />
+      {/* charts and stats stay pinned; only the waypoint list scrolls */}
+      <div className="ce-drawer-body ce-route-body">
+        <div className="ce-route-fixed">
+          <RouteTopView route={route} />
+          <RouteSideView route={route} />
 
-        <div className="ce-route-stats">
-          <span>{route.name}</span>
-          <span>
-            {totalDuration(route).toFixed(0)} s · {fmtKm(distance)} · {route.waypoints.length} wp
-          </span>
+          <div className="ce-route-stats">
+            <span>{route.name}</span>
+            <span>
+              {totalDuration(route).toFixed(0)} s · {fmtKm(distance)} · {route.waypoints.length} wp
+            </span>
+          </div>
+
+          <p className="ce-hint">
+            {route.waypoints.length === 0
+              ? 'Click the top-view map to add waypoints — or Load demo for an example.'
+              : 'Waypoints — camera keyframes'}
+          </p>
         </div>
-
-        <p className="ce-hint">
-          {route.waypoints.length === 0
-            ? 'Click the top-view map to add waypoints — or Load demo for an example.'
-            : 'Waypoints — camera keyframes'}
-        </p>
-        <WaypointList />
+        <div className="ce-route-list">
+          <WaypointList />
+        </div>
       </div>
     </aside>
   )

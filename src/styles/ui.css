@@ -155,6 +155,21 @@
   padding: 6px 10px 16px;
 }
 
+/* route drawer variant — charts/stats pinned, only the waypoint list scrolls */
+.ce-route-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ce-route-fixed {
+  flex-shrink: 0;
+}
+.ce-route-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .ce-stack {
   display: flex;
   flex-direction: column;
@@ -690,6 +705,10 @@
   background: var(--ce-accent-soft);
   color: var(--ce-accent);
 }
+.ce-minimap-tools button:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
 .ce-minimap svg {
   display: block;
   width: 100%;
@@ -776,6 +795,9 @@
 }
 .ce-minimap-side.is-panning {
   cursor: grabbing;
+}
+.ce-minimap-side.is-zooming {
+  cursor: ns-resize;
 }
 .ce-minimap-grid {
   stroke: var(--ce-border-strong);
