@@ -1,7 +1,10 @@
+import { useRef, useState } from 'react'
 import { useUI, type DrawerTab } from '../store/ui'
 import { LayersIcon, FilmIcon, TuneIcon, FolderIcon, CloseIcon } from './Icons'
 import IonSettingsPanel from '../features/settings/IonSettingsPanel'
 import SceneSettingsPanel from '../features/settings/SceneSettingsPanel'
+import { useAssets } from '../features/assets/assetStore'
+import { importAssetFile, isSupportedAsset, removeAsset, setAssetVisible, zoomToAsset } from '../features/assets/assetScene'
 
 const TABS: { id: DrawerTab; label: string; Icon: typeof LayersIcon }[] = [
   { id: 'layers', label: 'Layers', Icon: LayersIcon },
@@ -112,12 +115,85 @@ function PropsPanel() {
 }
 
 function AssetsPanel() {
+  const assets = useAssets((s) => s.assets)
+  const [dragOver, setDragOver] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const importFiles = (files: FileList | null) => {
+    if (!files) return
+    Array.from(files)
+      .filter(isSupportedAsset)
+      .forEach((f) => void importAssetFile(f))
+  }
+
   return (
     <div className="ce-stack">
-      <div className="ce-dropzone">
+      <div
+        className={`ce-dropzone${dragOver ? ' is-over' : ''}`}
+        role="button"
+        tabIndex={0}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click()
+        }}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          importFiles(e.dataTransfer.files)
+        }}
+      >
         <FolderIcon size={20} />
-        <span>Drop images, KML / GeoJSON here</span>
+        <span>Drop .glb / .gltf models, KML / KMZ overlays, Excel points or shapefile zips here</span>
+        <span className="ce-dropzone-sub">
+          or click to browse — models land at view centre; KML / Excel keep their own coordinates
+        </span>
       </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".glb,.gltf,.kml,.kmz,.xlsx,.xls,.zip"
+        multiple
+        hidden
+        onChange={(e) => {
+          importFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+
+      {assets.map((a) => (
+        <div
+          key={a.id}
+          className="ce-row ce-asset-row"
+          title={a.status === 'error' ? (a.error ?? 'load failed') : 'Double-click to frame'}
+          onDoubleClick={() => zoomToAsset(a.id)}
+        >
+          <input
+            type="checkbox"
+            checked={a.visible}
+            aria-label={a.name}
+            onChange={(e) => setAssetVisible(a.id, e.target.checked)}
+          />
+          <div className="ce-row-main">
+            <span className="ce-row-name">
+              <span className={`ce-asset-dot is-${a.status}`} />
+              {a.name}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="ce-icon-btn"
+            title="Remove"
+            onClick={() => removeAsset(a.id)}
+          >
+            <CloseIcon size={12} />
+          </button>
+        </div>
+      ))}
     </div>
   )
 }

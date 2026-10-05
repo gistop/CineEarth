@@ -14,6 +14,17 @@ export default function App() {
   const previewMode = useUI((s) => s.previewMode)
   const timelineExpanded = useUI((s) => s.timelineExpanded)
 
+  /* Kill in-page HTML5 drags (text-selection / image drags). Once one starts,
+     the browser swallows every pointermove and flashes the native no-drop
+     cursor — the minimap pan and other press-drag surfaces go dead. OS file
+     drops on the dropzone are unaffected: those never fire dragstart inside
+     this document. */
+  useEffect(() => {
+    const onDragStart = (e: DragEvent) => e.preventDefault()
+    document.addEventListener('dragstart', onDragStart)
+    return () => document.removeEventListener('dragstart', onDragStart)
+  }, [])
+
   /* Esc: exit preview → close panels · T: tools · R: route · G: growth · C: camera lock · S: sun · Space: play/pause */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

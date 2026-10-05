@@ -158,3 +158,21 @@ export const ClockIcon = ({ size = 15, className }: P) => (
     <path d="M12 7.5V12l3 2" />
   </svg>
 )
+
+export const PlusIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+)
+
+export const MinusIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M5 12h14" />
+  </svg>
+)
+
+export const MoveIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M12 3.5v17M3.5 12h17M12 3.5l-2.4 2.4M12 3.5l2.4 2.4M12 20.5l-2.4-2.4M12 20.5l2.4-2.4M3.5 12l2.4-2.4M3.5 12l2.4 2.4M20.5 12l-2.4-2.4M20.5 12l-2.4 2.4" />
+  </svg>
+)

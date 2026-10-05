@@ -236,9 +236,44 @@
   font-size: 12.5px;
   transition: border-color 120ms ease, color 120ms ease;
 }
+.ce-dropzone {
+  cursor: pointer;
+  text-align: center;
+}
 .ce-dropzone:hover {
   border-color: var(--ce-accent);
   color: var(--ce-text-2);
+}
+.ce-dropzone.is-over {
+  border-color: var(--ce-accent);
+  color: var(--ce-text-2);
+  background: var(--ce-accent-soft);
+}
+.ce-dropzone-sub {
+  font-size: 11px;
+  color: var(--ce-text-3);
+}
+/* status dot in front of asset names — yellow parsing / green in scene / red failed */
+.ce-asset-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--ce-text-3);
+}
+.ce-asset-dot.is-loading {
+  background: #d9a53a;
+}
+.ce-asset-dot.is-ready {
+  background: #47a25c;
+}
+.ce-asset-dot.is-error {
+  background: #cd4b48;
+}
+.ce-asset-row {
+  cursor: pointer;
 }
 
 /* ---------- bottom timeline ---------- */
@@ -620,12 +655,40 @@
   border-radius: var(--ce-radius-sm);
 }
 .ce-minimap figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 4px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ce-text-3);
+}
+
+/* compact tool buttons on the minimap caption line */
+.ce-minimap-tools {
+  display: inline-flex;
+  gap: 2px;
+}
+.ce-minimap-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--ce-radius-sm);
+  color: var(--ce-text-3);
+  transition: background 120ms ease, color 120ms ease;
+}
+.ce-minimap-tools button:hover {
+  background: var(--ce-surface);
+  color: var(--ce-text);
+}
+.ce-minimap-tools button.is-on {
+  background: var(--ce-accent-soft);
+  color: var(--ce-accent);
 }
 .ce-minimap svg {
   display: block;
@@ -700,15 +763,32 @@
   stroke-width: 1.4;
 }
 
-/* side-view elevation profile — vertical waypoint dragging */
+/* side-view elevation profile — vertical waypoint dragging + viewport pan */
 .ce-minimap-side {
   touch-action: none;
+  cursor: grab;
 }
 .ce-minimap-side .ce-minimap-wp {
   cursor: ns-resize;
 }
 .ce-minimap-side.is-dragging {
+  cursor: ns-resize;
+}
+.ce-minimap-side.is-panning {
   cursor: grabbing;
+}
+.ce-minimap-grid {
+  stroke: var(--ce-border-strong);
+  stroke-width: 0.5;
+  stroke-dasharray: 2 5;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.ce-minimap-ylabel {
+  font-family: var(--ce-font-mono);
+  font-size: 7.5px;
+  fill: var(--ce-text-3);
+  pointer-events: none;
 }
 .ce-minimap-ghost {
   fill: none;

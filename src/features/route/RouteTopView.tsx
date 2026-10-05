@@ -8,6 +8,8 @@
 //  · playhead marker follows the camera each frame (reads store, no re-render)
 
 import { useEffect, useRef } from 'react'
+import { Cartesian2, Cartesian3, Cartographic, Math as CesiumMath } from 'cesium'
+import { getViewer } from '../../cesium/viewerRegistry'
 import Feature from 'ol/Feature.js'
 import Map from 'ol/Map.js'
 import View from 'ol/View.js'
@@ -18,12 +20,15 @@ import VectorLayer from 'ol/layer/Vector.js'
 import OSM from 'ol/source/OSM.js'
 import VectorSource from 'ol/source/Vector.js'
 import Translate from 'ol/interaction/Translate.js'
+import DragPan from 'ol/interaction/DragPan.js'
+import DoubleClickZoom from 'ol/interaction/DoubleClickZoom.js'
 import { fromLonLat, toLonLat } from 'ol/proj.js'
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from 'ol/style.js'
 import type { TranslateEvent } from 'ol/interaction/Translate.js'
 import { samplePath, samplePose } from './pathMath'
 import { useRoute } from './routeStore'
 import { useUI } from '../../store/ui'
+import { MinusIcon, PlusIcon, TargetIcon } from '../../components/Icons'
 import type { Pose, Route } from './types'
 
 /* palette — mirrors tokens.css (canvas styles can't read CSS vars) */
@@ -74,9 +79,14 @@ export default function RouteTopView({ route }: { route: Route }) {
   const sourceRef = useRef<VectorSource | null>(null)
   const headLayerRef = useRef<VectorLayer | null>(null)
   const headFeatureRef = useRef<Feature<Point> | null>(null)
-  const fitTokenRef = useRef(0)
-  const wpCountRef = useRef(-1)
   const draggingRef = useRef(false)
+  const syncToGlobeRef = useRef<(() => void) | null>(null)
+
+  const nudgeZoom = (delta: number) => {
+    const view = mapRef.current?.getView()
+    const zoom = view?.getZoom()
+    if (view && Number.isFinite(zoom)) view.animate({ zoom: (zoom ?? 0) + delta, duration: 180 })
+  }
 
   /* ---- init the map once: layers, drag interaction, click-select ---- */
   useEffect(() => {
@@ -104,8 +114,19 @@ export default function RouteTopView({ route }: { route: Route }) {
       controls: [],
     })
 
+    /* drop the default double-click zoom — an editing canvas, not a browsing
+       map; accidental double-clicks jumping the zoom level is pure annoyance */
+    map
+      .getInteractions()
+      .getArray()
+      .filter((i) => i instanceof DoubleClickZoom)
+      .forEach((i) => map.getInteractions().remove(i))
+
+    /* generous grab radius — the dots are only 5px, exact hits are frustrating */
+    const HIT_TOLERANCE = 6
     const translate = new Translate({
       filter: (feature) => feature.get('kind') === 'waypoint',
+      hitTolerance: HIT_TOLERANCE,
     })
     /* live-sync: commit on every translating frame so globe & side view follow
        the drag in real time; translateend re-commits the final position */
@@ -144,8 +165,28 @@ export default function RouteTopView({ route }: { route: Route }) {
     })
     map.addInteraction(translate)
 
+    /* waypoint dragging must not fight the map's DragPan — both would answer
+       the same pointer gesture (feature AND map move together). Suppress pan
+       for the duration of any pointer-down that lands on a waypoint. */
+    const dragPan =
+      map.getInteractions().getArray().find((i): i is DragPan => i instanceof DragPan) ?? null
+    let panSuppressed = false
+    map.on('pointerdown', (event) => {
+      const hit = map.forEachFeatureAtPixel(event.pixel, (f) => f, { hitTolerance: HIT_TOLERANCE })
+      panSuppressed = hit?.get('kind') === 'waypoint'
+      if (panSuppressed) dragPan?.setActive(false)
+    })
+    const restorePan = () => {
+      if (panSuppressed) {
+        dragPan?.setActive(true)
+        panSuppressed = false
+      }
+    }
+    map.on('pointerup', restorePan)
+    map.on('pointercancel', restorePan)
+
     map.on('click', (event) => {
-      const hit = map.forEachFeatureAtPixel(event.pixel, (f) => f)
+      const hit = map.forEachFeatureAtPixel(event.pixel, (f) => f, { hitTolerance: HIT_TOLERANCE })
       if (hit?.get('kind') === 'waypoint') {
         const id = hit.get('waypointId') as string | undefined
         const { selectedWaypointId, selectWaypoint } = useRoute.getState()
@@ -170,8 +211,64 @@ export default function RouteTopView({ route }: { route: Route }) {
     const observer = new ResizeObserver(() => map.updateSize())
     observer.observe(container)
 
+    /* sync extent to the main globe — pick the ground under the screen centre
+       and measure the near-field span. computeViewRectangle() would stretch a
+       tilted cinematic camera's frustum all the way to the horizon. */
+    const fitToGlobe = (): boolean => {
+      const size = map.getSize()
+      if (!size || size[0] < 10 || size[1] < 10) return false
+      const viewer = getViewer()
+      if (!viewer) return true
+
+      const canvas = viewer.canvas
+      const pick = (x: number, y: number) => {
+        const ray = viewer.camera.getPickRay(new Cartesian2(x, y))
+        return ray ? viewer.scene.globe.pick(ray, viewer.scene) : null
+      }
+      const centre = pick(canvas.clientWidth / 2, canvas.clientHeight / 2)
+      const foot = pick(canvas.clientWidth / 2, canvas.clientHeight * 0.85)
+
+      if (centre) {
+        const carto = Cartographic.fromCartesian(centre)
+        const c = fromLonLat([
+          CesiumMath.toDegrees(carto.longitude),
+          CesiumMath.toDegrees(carto.latitude),
+        ])
+        let radius = foot ? Cartesian3.distance(centre, foot) : 0
+        if (!Number.isFinite(radius) || radius < 1) {
+          radius = viewer.camera.positionCartographic.height // near top-down fallback
+        }
+        radius = Math.min(Math.max(radius, 40), 2_000_000)
+        map.getView().fit([c[0] - radius, c[1] - radius, c[0] + radius, c[1] + radius], {
+          padding: [12, 12, 12, 12],
+          maxZoom: 17,
+        })
+        return true
+      }
+
+      /* camera facing the sky — fall back to the frustum/ellipsoid rectangle */
+      const rect = viewer.camera.computeViewRectangle()
+      if (rect) {
+        const sw = fromLonLat([CesiumMath.toDegrees(rect.west), CesiumMath.toDegrees(rect.south)])
+        const ne = fromLonLat([CesiumMath.toDegrees(rect.east), CesiumMath.toDegrees(rect.north)])
+        if ([...sw, ...ne].every(Number.isFinite)) {
+          map.getView().fit([sw[0], sw[1], ne[0], ne[1]], { padding: [12, 12, 12, 12] })
+        }
+      }
+      return true
+    }
+
+    let initialFitDone = fitToGlobe()
+    syncToGlobeRef.current = fitToGlobe
+    const fitObserver = new ResizeObserver(() => {
+      if (!initialFitDone) initialFitDone = fitToGlobe()
+    })
+    fitObserver.observe(container)
+
     return () => {
       observer.disconnect()
+      fitObserver.disconnect()
+      syncToGlobeRef.current = null
       map.setTarget(undefined)
       mapRef.current = null
       sourceRef.current = null
@@ -224,18 +321,8 @@ export default function RouteTopView({ route }: { route: Route }) {
       source.addFeature(f)
     })
 
-    if (wpCountRef.current !== route.waypoints.length) {
-      wpCountRef.current = route.waypoints.length
-      fitTokenRef.current += 1
-      const token = fitTokenRef.current
-      window.setTimeout(() => {
-        if (token !== fitTokenRef.current || !mapRef.current) return
-        const extent = source.getExtent()
-        if (extent && extent.filter(Number.isFinite).length === 4) {
-          mapRef.current.getView().fit(extent, { padding: [20, 20, 20, 20], maxZoom: 15 })
-        }
-      }, 30)
-    }
+    /* never refit on data changes — the map stays where the user put it.
+       Initial positioning is handled by the globe-sync fit at mount. */
   }, [route.waypoints, route.name])
 
   /* keep `selected` flag fresh without rebuilding geometry */
@@ -269,7 +356,25 @@ export default function RouteTopView({ route }: { route: Route }) {
 
   return (
     <figure className="ce-minimap">
-      <figcaption>Top view</figcaption>
+      <figcaption>
+        <span>Top view</span>
+        <span className="ce-minimap-tools">
+          <button
+            type="button"
+            title="Sync — match the main globe view"
+            aria-label="Sync minimap to main view"
+            onClick={() => syncToGlobeRef.current?.()}
+          >
+            <TargetIcon size={12} />
+          </button>
+          <button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => nudgeZoom(1)}>
+            <PlusIcon size={12} />
+          </button>
+          <button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => nudgeZoom(-1)}>
+            <MinusIcon size={12} />
+          </button>
+        </span>
+      </figcaption>
       <div className="ce-olmap-wrap">
         <div ref={containerRef} className="ce-olmap" role="img" aria-label="Route top view map" />
         <span className="ce-olmap-north" aria-hidden="true">N</span>
