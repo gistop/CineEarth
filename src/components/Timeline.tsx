@@ -1,9 +1,10 @@
-import { useRef } from 'react'
-import { useUI } from '../store/ui'
+import { useEffect, useRef, useState } from 'react'
+import { useUI, TL_H_DEFAULT } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
-import { totalDuration, waypointFractions } from '../features/route/pathMath'
+import { totalDuration } from '../features/route/pathMath'
 import { useExport } from '../features/export/exportStore'
 import { renderRouteVideo, takeScreenshot } from '../features/export/actions'
+import TimelineTracks, { TimelineRuler, clampView } from './TimelineTracks'
 import { useReveal } from '../features/route/revealStore'
 import {
   SlidersIcon,
@@ -27,6 +28,8 @@ import {
 export default function Timeline() {
   const expanded = useUI((s) => s.timelineExpanded)
   const toggleTimeline = useUI((s) => s.toggleTimeline)
+  const tlHeight = useUI((s) => s.tlHeight)
+  const setTlHeight = useUI((s) => s.setTlHeight)
   const setPreviewMode = useUI((s) => s.setPreviewMode)
   const toggleRightDrawer = useUI((s) => s.toggleRightDrawer)
   const rightDrawerOpen = useUI((s) => s.rightDrawerOpen)
@@ -38,7 +41,6 @@ export default function Timeline() {
   const setTarget = useRoute((s) => s.setTarget)
   const playing = useUI((s) => s.playing)
   const setPlaying = useUI((s) => s.setPlaying)
-  const setScrubbing = useUI((s) => s.setScrubbing)
   const cameraLocked = useUI((s) => s.cameraLocked)
   const setCameraLocked = useUI((s) => s.setCameraLocked)
   const sunOpen = useUI((s) => s.sunOpen)
@@ -47,12 +49,6 @@ export default function Timeline() {
   /* growth-line keyframe track (AE-style reveal %) */
   const growthLine = useReveal((s) => s.growthLine)
   const setGrowthLine = useReveal((s) => s.setGrowthLine)
-  const revealKeys = useReveal((s) => s.keys)
-  const revealSelected = useReveal((s) => s.selectedKeyId)
-  const addRevealKey = useReveal((s) => s.addKey)
-  const moveRevealKey = useReveal((s) => s.moveKey)
-  const removeRevealKey = useReveal((s) => s.removeKey)
-  const selectRevealKey = useReveal((s) => s.selectKey)
 
   const route = useRoute((s) => s.route)
   const progress = useRoute((s) => s.progress)
@@ -62,35 +58,72 @@ export default function Timeline() {
   const exportProgress = useExport((s) => s.progress)
 
   const DURATION = Math.max(0.1, totalDuration(route))
-  const scrubRef = useRef<HTMLDivElement>(null)
-
-  /* pointer scrubbing */
-  const scrubTo = (clientX: number) => {
-    const el = scrubRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    setProgress((clientX - r.left) / r.width)
-  }
-
-  /* reveal-track helpers: lane x → playhead fraction & key dragging */
-  const revealLaneRef = useRef<HTMLDivElement>(null)
-  const revealDragRef = useRef<{ id: string; x: number; y: number; t: number; v: number } | null>(null)
-
-  const revealLaneT = (clientX: number) => {
-    const el = revealLaneRef.current
-    if (!el) return 0
-    const r = el.getBoundingClientRect()
-    return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-  }
-
-  const sortedRevealKeys = [...revealKeys].sort((a, b) => a.t - b.t)
-
-  const cameraKeys = waypointFractions(route).map((f) => f * 100)
-  const ticks = buildTicks(DURATION)
   const rendering = exportStatus === 'rendering'
 
+  /* live resize of the expanded panel — the top edge is the grip */
+  const [resizing, setResizing] = useState(false)
+
+  /* ONE ruler, always in the transport bar: collapsed = full overview,
+     expanded = view-windowed. Its measured edges feed --ce-tl-axis-l/r so the
+     tracks grid below aligns its lane column to the ruler pixel-for-pixel. */
+  const tlView = useUI((s) => s.tlView)
+  const footerRef = useRef<HTMLElement>(null)
+  const rulerSlotRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const foot = footerRef.current
+    const slot = rulerSlotRef.current
+    if (!foot || !slot) return
+    const sync = () => {
+      const f = foot.getBoundingClientRect()
+      const r = slot.getBoundingClientRect()
+      foot.style.setProperty('--ce-tl-axis-l', `${r.left - f.left}px`)
+      foot.style.setProperty('--ce-tl-axis-r', `${f.right - r.right}px`)
+    }
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(slot) // catches sibling width changes (render %, timecode…)
+    ro.observe(foot)
+    return () => ro.disconnect()
+  }, [])
+
   return (
-    <footer className="ce-timeline" data-expanded={expanded}>
+    <footer ref={footerRef} className={`ce-timeline${resizing ? ' is-resizing' : ''}`} data-expanded={expanded}>
+      {/* drag-to-resize handle (expanded only): pointer capture keeps the drag
+          alive outside the 5px strip; double-click / Home resets to default */}
+      {expanded && (
+        <div
+          className={`ce-tl-resize${resizing ? ' is-active' : ''}`}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="时间轴高度"
+          title="拖动调整高度 · 双击复位"
+          tabIndex={0}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId)
+            setResizing(true)
+          }}
+          onPointerMove={(e) => {
+            if (!(e.buttons & 1)) return
+            /* bottom-anchored panel: height = distance from the screen bottom */
+            setTlHeight(window.innerHeight - e.clientY)
+          }}
+          onPointerUp={() => setResizing(false)}
+          onPointerCancel={() => setResizing(false)}
+          onDoubleClick={() => setTlHeight(TL_H_DEFAULT)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setTlHeight(tlHeight + 16)
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setTlHeight(tlHeight - 16)
+            } else if (e.key === 'Home') {
+              e.preventDefault()
+              setTlHeight(TL_H_DEFAULT)
+            }
+          }}
+        />
+      )}
       <div className="ce-tl-bar">
         <div className="ce-transport">
           <button
@@ -147,37 +180,11 @@ export default function Timeline() {
           </button>
         </div>
 
-        <div
-          ref={scrubRef}
-          className="ce-scrub"
-          role="slider"
-          aria-label="Playhead"
-          aria-valuemin={0}
-          aria-valuemax={DURATION}
-          aria-valuenow={Math.round(progress * DURATION * 10) / 10}
-          tabIndex={0}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId)
-            setScrubbing(true)
-            scrubTo(e.clientX)
-          }}
-          onPointerMove={(e) => {
-            if (e.buttons === 1) scrubTo(e.clientX)
-          }}
-          onPointerUp={() => setScrubbing(false)}
-          onPointerCancel={() => setScrubbing(false)}
-        >
-          <div className="ce-scrub-track" />
-          <div className="ce-scrub-fill" style={{ width: `${progress * 100}%` }} />
-          {cameraKeys.map((k, i) => (
-            <span key={i} className="ce-scrub-key" style={{ left: `${k}%` }} />
-          ))}
-          <div className="ce-scrub-knob" style={{ left: `${progress * 100}%` }} />
+        {/* the ONE ruler — this slot is its home in BOTH states (never moves);
+            expanded it carries the view window, collapsed the full overview */}
+        <div className="ce-tl-ruler-slot" ref={rulerSlotRef}>
+          <TimelineRuler view={expanded ? clampView(tlView, DURATION) : undefined} />
         </div>
-
-        <span className="ce-timecode">
-          {fmt(progress * DURATION)} / {fmt(DURATION)}
-        </span>
 
         <div className="ce-tl-actions">
           <button
@@ -240,110 +247,9 @@ export default function Timeline() {
         </div>
       </div>
 
-      {expanded && (
-        <div className="ce-tracks" style={{ '--ph': progress } as React.CSSProperties}>
-          <div className="ce-ruler">
-            <span className="ce-ruler-spacer" />
-            <div className="ce-ruler-lane">
-              {ticks.map((s) => (
-                <span key={s} className="ce-ruler-tick" style={{ left: `${(s / DURATION) * 100}%` }}>
-                  {s}s
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="ce-track">
-            <span className="ce-track-label">Camera</span>
-            <div className="ce-track-lane">
-              {cameraKeys.map((k, i) => (
-                <span key={i} className="ce-key" style={{ left: `${k}%` }} title={`Waypoint ${i + 1}`} />
-              ))}
-            </div>
-          </div>
-
-          {/* growth line — keyframed reveal %: dbl-click lane adds a key,
-              drag a key to move in time (x) / change % (y, up = more),
-              dbl-click a key removes it */}
-          <div className="ce-track">
-            <span className="ce-track-label">Growth</span>
-            <div
-              ref={revealLaneRef}
-              className="ce-track-lane ce-reveal-lane"
-              title="Growth % · dbl-click: add key · drag: time / % · dbl-click key: delete"
-              onDoubleClick={(e) => {
-                if ((e.target as HTMLElement).closest('.ce-reveal-key')) return
-                addRevealKey(revealLaneT(e.clientX))
-              }}
-            >
-              <svg className="ce-reveal-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <polyline
-                  points={sortedRevealKeys.map((k) => `${k.t * 100},${100 - k.value}`).join(' ')}
-                  vectorEffect="non-scaling-stroke"
-                />
-              </svg>
-              {sortedRevealKeys.map((k) => (
-                <span
-                  key={k.id}
-                  className={`ce-key ce-reveal-key${k.id === revealSelected ? ' is-selected' : ''}`}
-                  style={{ left: `${k.t * 100}%` }}
-                  title={`${Math.round(k.value)}% @ ${(k.t * DURATION).toFixed(1)}s`}
-                  onPointerDown={(e) => {
-                    e.stopPropagation()
-                    e.currentTarget.setPointerCapture(e.pointerId)
-                    revealDragRef.current = { id: k.id, x: e.clientX, y: e.clientY, t: k.t, v: k.value }
-                    selectRevealKey(k.id)
-                  }}
-                  onPointerMove={(e) => {
-                    const d = revealDragRef.current
-                    if (!d || e.buttons !== 1) return
-                    const r = revealLaneRef.current?.getBoundingClientRect()
-                    if (!r) return
-                    const nextT = Math.min(1, Math.max(0, d.t + (e.clientX - d.x) / r.width))
-                    const nextV = Math.min(100, Math.max(0, d.v - (e.clientY - d.y) * 0.5))
-                    moveRevealKey(d.id, nextT, nextV)
-                  }}
-                  onPointerUp={() => {
-                    revealDragRef.current = null
-                  }}
-                  onPointerCancel={() => {
-                    revealDragRef.current = null
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation()
-                    removeRevealKey(k.id)
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="ce-track">
-            <span className="ce-track-label">Heading</span>
-            <div className="ce-track-lane" />
-          </div>
-          <div className="ce-track">
-            <span className="ce-track-label">FOV</span>
-            <div className="ce-track-lane" />
-          </div>
-
-          <div className="ce-playhead" />
-        </div>
-      )}
+      {/* expanded editor — when collapsed it hides entirely (stays mounted so
+          solo / selection survive); the bar's ruler covers scrubbing */}
+      <TimelineTracks />
     </footer>
   )
-}
-
-function buildTicks(duration: number): number[] {
-  const step = duration > 40 ? 10 : 5
-  const ticks: number[] = []
-  for (let s = 0; s < duration - 0.01; s += step) ticks.push(Math.round(s))
-  return ticks
-}
-
-const fmt = (sec: number) => {
-  const m = Math.floor(sec / 60)
-  const s = Math.floor(sec % 60)
-  const d = Math.floor((sec % 1) * 10)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`
 }

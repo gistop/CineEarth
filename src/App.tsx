@@ -13,6 +13,7 @@ import './styles/ui.css'
 export default function App() {
   const previewMode = useUI((s) => s.previewMode)
   const timelineExpanded = useUI((s) => s.timelineExpanded)
+  const tlHeight = useUI((s) => s.tlHeight)
 
   /* Kill in-page HTML5 drags (text-selection / image drags). Once one starts,
      the browser swallows every pointermove and flashes the native no-drop
@@ -61,7 +62,7 @@ export default function App() {
   return (
     <div
       className="ce-app"
-      style={{ '--ce-tl-h': timelineExpanded ? 'var(--ce-tl-expanded)' : 'var(--ce-tl-collapsed)' } as React.CSSProperties}
+      style={{ '--ce-tl-h': timelineExpanded ? `${tlHeight}px` : 'var(--ce-tl-collapsed)' } as React.CSSProperties}
     >
       <GlobeViewport />
 

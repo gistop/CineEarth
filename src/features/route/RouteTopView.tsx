@@ -6,7 +6,8 @@
 //    only while the toolbar's add-mode toggle is ON (off = browse/select)
 //  · waypoints are DRAGGABLE (Translate) — live-commits lon/lat while dragging,
 //    so globe & side view follow in real time; spline refreshes in place mid-drag
-//  · playhead marker follows the camera each frame (reads store, no re-render)
+//  · RED camera marker + ground footprint follow the MAIN VIEWPORT camera
+//    every frame (Earth Studio top-view style; reads the viewer, no re-render)
 
 import { useEffect, useRef, useState } from 'react'
 import { Cartesian2, Cartesian3, Cartographic, Math as CesiumMath } from 'cesium'
@@ -16,6 +17,7 @@ import Map from 'ol/Map.js'
 import View from 'ol/View.js'
 import LineString from 'ol/geom/LineString.js'
 import Point from 'ol/geom/Point.js'
+import Polygon from 'ol/geom/Polygon.js'
 import TileLayer from 'ol/layer/Tile.js'
 import VectorLayer from 'ol/layer/Vector.js'
 import OSM from 'ol/source/OSM.js'
@@ -24,10 +26,10 @@ import Translate from 'ol/interaction/Translate.js'
 import DragPan from 'ol/interaction/DragPan.js'
 import DoubleClickZoom from 'ol/interaction/DoubleClickZoom.js'
 import { fromLonLat, toLonLat } from 'ol/proj.js'
-import { Circle as CircleStyle, Fill, Stroke, Style, Text } from 'ol/style.js'
+import { Circle as CircleStyle, Fill, RegularShape, Stroke, Style, Text } from 'ol/style.js'
 import type { TranslateEvent } from 'ol/interaction/Translate.js'
 import type { MapBrowserEvent } from 'ol'
-import { samplePath, samplePose } from './pathMath'
+import { samplePath } from './pathMath'
 import { useRoute } from './routeStore'
 import { useUI } from '../../store/ui'
 import { MinusIcon, PlusIcon, TargetIcon, PinIcon } from '../../components/Icons'
@@ -36,6 +38,7 @@ import type { Pose, Route } from './types'
 /* palette — mirrors tokens.css (canvas styles can't read CSS vars) */
 const ACCENT = '#38618c'
 const INK = '#fbfbfa'
+const DANGER = '#b3563d'
 const FONT_MONO = '500 10px ui-monospace, SFMono-Regular, Menlo, monospace'
 
 const waypointStyle = (index: number, selected: boolean) =>
@@ -58,12 +61,23 @@ const pathStyle = new Style({
   stroke: new Stroke({ color: ACCENT, width: 2.2, lineCap: 'round', lineJoin: 'round' }),
 })
 
-const headStyle = new Style({
-  image: new CircleStyle({
-    radius: 6,
-    fill: new Fill({ color: 'rgba(56, 97, 140, 0.30)' }),
-    stroke: new Stroke({ color: ACCENT, width: 2 }),
-  }),
+/* red live-camera marker — triangle rotated to the camera heading (positive
+   OL rotation = clockwise, same handedness as Cesium heading). Rebuilt only
+   when heading moves past a small threshold (see the rAF loop below). */
+const headStyle = (headingRad: number) =>
+  new Style({
+    image: new RegularShape({
+      points: 3,
+      radius: 9,
+      rotation: headingRad,
+      fill: new Fill({ color: 'rgba(179, 86, 61, 0.35)' }),
+      stroke: new Stroke({ color: DANGER, width: 2 }),
+    }),
+  })
+
+/* camera footprint — the main viewport's frustum projected on the ground */
+const footprintStyle = new Style({
+  stroke: new Stroke({ color: 'rgba(251, 251, 250, 0.9)', width: 1.5 }),
 })
 
 /* original-position ghost ring shown while dragging a waypoint */
@@ -81,6 +95,7 @@ export default function RouteTopView({ route }: { route: Route }) {
   const sourceRef = useRef<VectorSource | null>(null)
   const headLayerRef = useRef<VectorLayer | null>(null)
   const headFeatureRef = useRef<Feature<Point> | null>(null)
+  const fovFeatureRef = useRef<Feature<Polygon> | null>(null)
   const draggingRef = useRef(false)
   const syncToGlobeRef = useRef<(() => void) | null>(null)
 
@@ -99,6 +114,19 @@ export default function RouteTopView({ route }: { route: Route }) {
     const zoom = view?.getZoom()
     if (view && Number.isFinite(zoom)) view.animate({ zoom: (zoom ?? 0) + delta, duration: 180 })
   }
+
+  /* the mount-time fitToGlobe() ran at APP START against the boot camera —
+     the drawer hides via visibility (layout kept), so opening it never
+     resizes the container and the resize-retry never fires. Refit exactly
+     ONCE on the first drawer open; later opens keep the user's manual pan. */
+  const rightDrawerOpen = useUI((s) => s.rightDrawerOpen)
+  const firstOpenFit = useRef(false)
+  useEffect(() => {
+    if (rightDrawerOpen && !firstOpenFit.current) {
+      firstOpenFit.current = true
+      syncToGlobeRef.current?.()
+    }
+  }, [rightDrawerOpen])
 
   /* ---- init the map once: layers, drag interaction, click-select ---- */
   useEffect(() => {
@@ -215,13 +243,21 @@ export default function RouteTopView({ route }: { route: Route }) {
       useRoute.getState().addWaypoint(lon, lat)
     })
 
+    /* camera footprint FIRST (under), red live-camera marker on top */
+    const footprint = new Feature(new Polygon([[]]))
+    footprint.set('kind', 'footprint')
+    footprint.setStyle(footprintStyle)
+    headSource.addFeature(footprint)
+
     const head = new Feature(new Point(fromLonLat([7, 61])))
     head.set('kind', 'head')
+    head.setStyle(headStyle(0))
     headSource.addFeature(head)
 
     mapRef.current = map
     sourceRef.current = source
     headFeatureRef.current = head
+    fovFeatureRef.current = footprint
     headLayerRef.current = map.getLayers().item(2) as VectorLayer
 
     const observer = new ResizeObserver(() => map.updateSize())
@@ -289,6 +325,7 @@ export default function RouteTopView({ route }: { route: Route }) {
       mapRef.current = null
       sourceRef.current = null
       headFeatureRef.current = null
+      fovFeatureRef.current = null
       headLayerRef.current = null
     }
   }, [])
@@ -353,18 +390,77 @@ export default function RouteTopView({ route }: { route: Route }) {
     [],
   )
 
-  /* ---- playhead marker: frame-driven, never re-renders React ---- */
+  /* ---- live camera marker: red position/heading triangle + ground
+     footprint, both driven by the MAIN VIEWPORT camera (Earth Studio
+     top-view style). While the route plays, the globe camera IS the route
+     camera, so the marker follows the playhead for free; free-roaming
+     shows where you actually look. rAF loop, never re-renders React. ---- */
   useEffect(() => {
     let raf = 0
+    let lastHeading = Number.NaN
+    let lastX = Number.NaN
+    let lastY = Number.NaN
+    let lastRing: number[] | null = null
+    const EMPTY: number[][] = []
+
     const tick = () => {
       raf = requestAnimationFrame(tick)
-      const feature = headFeatureRef.current
-      const layer = headLayerRef.current
-      if (!feature || !layer) return
-      const { progress, route: r } = useRoute.getState()
-      layer.setVisible(progress > 0 || useUI.getState().playing)
-      const pose = samplePose(r, progress)
-      if (pose) feature.getGeometry()?.setCoordinates(fromLonLat([pose.lon, pose.lat]))
+      const head = headFeatureRef.current
+      const fov = fovFeatureRef.current
+      if (!head || !fov) return
+      const viewer = getViewer()
+      if (!viewer || viewer.isDestroyed()) return
+      const cam = viewer.camera
+
+      /* red marker = live camera position, rotated to heading */
+      const carto = cam.positionCartographic
+      const x = CesiumMath.toDegrees(carto.longitude)
+      const y = CesiumMath.toDegrees(carto.latitude)
+      if (Math.abs(x - lastX) > 1e-9 || Math.abs(y - lastY) > 1e-9) {
+        lastX = x
+        lastY = y
+        head.getGeometry()?.setCoordinates(fromLonLat([x, y]))
+      }
+      if (Math.abs(cam.heading - lastHeading) > 0.002) {
+        lastHeading = cam.heading
+        head.setStyle(headStyle(cam.heading))
+      }
+
+      /* footprint: the 4 canvas corner rays projected onto the ground
+         (pure ellipsoid pick — cheap enough to run every frame; the ES
+         version draws to the horizon, we simply hide when a corner
+         faces the sky). All writes are dirty-checked so a still camera
+         never triggers a redraw. */
+      const c = viewer.canvas
+      const w = c.clientWidth
+      const h = c.clientHeight
+      const ring: number[] = []
+      for (const [px, py] of [
+        [0, 0],
+        [w, 0],
+        [w, h],
+        [0, h],
+      ] as const) {
+        const hit = cam.pickEllipsoid(new Cartesian2(px, py), viewer.scene.globe.ellipsoid)
+        if (!hit) {
+          if (lastRing !== null) {
+            lastRing = null
+            fov.getGeometry()?.setCoordinates([EMPTY])
+          }
+          return
+        }
+        const hc = Cartographic.fromCartesian(hit)
+        const p = fromLonLat([CesiumMath.toDegrees(hc.longitude), CesiumMath.toDegrees(hc.latitude)])
+        ring.push(p[0], p[1])
+      }
+      if (lastRing === null || ring.some((v, i) => Math.abs(v - lastRing![i]) > 1e-9)) {
+        lastRing = ring
+        fov
+          .getGeometry()
+          ?.setCoordinates([
+            [ring.slice(0, 2), ring.slice(2, 4), ring.slice(4, 6), ring.slice(6, 8), ring.slice(0, 2)],
+          ])
+      }
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)

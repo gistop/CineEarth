@@ -331,6 +331,29 @@
   transition: height var(--ce-dur) var(--ce-ease);
 }
 
+/* top-edge drag handle — resizes the expanded panel (the border is the grip,
+   Blender-style). Hover/active tints it accent; hidden in collapsed state by
+   conditional render. Height comes from ui-store tlHeight (App pipes it into
+   --ce-tl-h), so drawers / attribution anchored on that var follow along. */
+.ce-tl-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 5;
+}
+.ce-tl-resize:hover,
+.ce-tl-resize.is-active {
+  background: color-mix(in srgb, var(--ce-accent) 30%, transparent);
+}
+/* live drag: panel must track the pointer 1:1 — no height transition */
+.ce-timeline.is-resizing {
+  transition: none;
+}
+
 .ce-tl-bar {
   flex: none;
   height: var(--ce-tl-collapsed);
@@ -366,52 +389,6 @@
   color: #fff;
 }
 
-.ce-scrub {
-  position: relative;
-  flex: 1;
-  height: 30px;
-  cursor: pointer;
-  touch-action: none;
-}
-.ce-scrub-track {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 4px;
-  transform: translateY(-50%);
-  border-radius: 2px;
-  background: var(--ce-surface-3);
-}
-.ce-scrub-fill {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  height: 4px;
-  transform: translateY(-50%);
-  border-radius: 2px;
-  background: var(--ce-accent);
-}
-.ce-scrub-knob {
-  position: absolute;
-  top: 50%;
-  width: 11px;
-  height: 11px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: var(--ce-surface);
-  border: 2px solid var(--ce-accent);
-  box-shadow: var(--ce-shadow-1);
-}
-
-.ce-timecode {
-  flex: none;
-  font-family: var(--ce-font-mono);
-  font-size: 11.5px;
-  color: var(--ce-text-2);
-  white-space: nowrap;
-}
-
 .ce-tl-actions {
   display: flex;
   gap: 2px;
@@ -419,29 +396,104 @@
 
 /* ----- expanded: multi-track editor ----- */
 
+/* One coordinate system: the lane column is aligned to the BAR RULER's
+   measured edges (--ce-tl-axis-l/r, written by Timeline.tsx) — the ruler
+   never moves, the grid reaches up to it. Fallbacks = old fixed layout,
+   visible only for the first frame before the observer fires. */
 .ce-tracks {
-  --lane-label: 84px;
+  --lane-label: calc(var(--ce-tl-axis-l, 220px) - var(--ce-pad-x) - var(--ce-lane-gap));
+  /* lanes must END at the ruler's right edge: right padding = the ruler's
+     right offset minus the gutter the lane scroller reserves. The gutter is
+     MEASURED (TimelineTracks.tsx → --ce-lanes-gutter), never assumed: with
+     `scrollbar-width: thin` set, Chrome ignores ::-webkit-scrollbar widths
+     and sizes the gutter itself, so a hardcoded 6px left the lane column
+     short of the ruler's right edge. */
+  --ce-tracks-pr: calc(var(--ce-tl-axis-r, 30px) - var(--ce-lanes-gutter, 6px));
+  --ce-lane-gap: 10px;
+  --ce-pad-x: 12px;
+  --ce-row-grid: var(--lane-label) minmax(0, 1fr);
   position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 4px 12px 12px;
+  /* 4 values on purpose: the LEFT padding must be --ce-pad-x, the same one
+     --lane-label / .ce-axis assume. A 3-value shorthand copies the RIGHT
+     value into the left slot → the whole grid shifts by the actions-group
+     width and the lanes start far right of the ruler's 0 tick. */
+  padding: 4px var(--ce-tracks-pr) var(--ce-pad-x) var(--ce-pad-x);
+  user-select: none;
+}
+/* the row stack — scrolls vertically when the rows don't fit. The 6px gutter
+   is ALWAYS reserved (stable) so lane widths never jitter. Top margin clears
+   the axis overlay's focus-tick strip. */
+.ce-lanes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+.ce-lanes::-webkit-scrollbar {
+  width: 6px;
+}
+.ce-lanes::-webkit-scrollbar-thumb {
+  background: var(--ce-surface-3);
+  border-radius: 3px;
+}
+/* collapsed: the tracks area hides entirely (stays mounted — solo /
+   selection survive); the bar's ruler keeps covering scrubbing */
+.ce-timeline[data-expanded='false'] .ce-tracks {
+  display: none;
 }
 
-.ce-ruler {
+/* the ruler's permanent home in the bar (both states): fills the middle,
+   vertically centred. This slot is what Timeline.tsx measures to derive
+   --ce-tl-axis-l/r for the tracks grid below. */
+.ce-tl-ruler-slot {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  flex: none;
-  height: 18px;
+  align-items: center;
 }
-.ce-ruler-spacer {
-  width: var(--lane-label);
-  flex: none;
-}
-.ce-ruler-lane {
+/* THE ruler: scrub strip + ticks + playhead flag in one surface.
+   Clips ticks/playhead outside the view window — but 22px OUTSIDE the
+   box on both x sides: the playhead's head box (~34px wide) is centred
+   on its time, so at t=0 / t=duration a plain overflow:hidden would
+   slice it in half. */
+.ce-tl-ruler {
   position: relative;
   flex: 1;
+  height: 30px;
+  align-self: center;
+  cursor: ew-resize;
+  touch-action: none;
+  clip-path: inset(0 -22px 0 -22px);
+}
+.ce-tl-ruler-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ce-surface-3);
+  pointer-events: none;
+}
+.ce-tl-ruler-fill {
+  position: absolute;
+  left: 0;
+  bottom: 2px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ce-accent);
+  pointer-events: none;
 }
 .ce-ruler-tick {
   position: absolute;
@@ -450,21 +502,127 @@
   font-family: var(--ce-font-mono);
   font-size: 10px;
   color: var(--ce-text-3);
+  /* ticks float ABOVE the brush — must not eat its drag hits */
+  pointer-events: none;
 }
-.ce-ruler-tick:first-child {
+.ce-ruler-tick.is-zero {
   transform: none;
+}
+/* playhead handle on the ruler — DRAGGABLE (grab it to scrub even while
+   expanded; brush owns the rest of the ruler). Wide blue head shows the
+   seconds readout directly; a small pointer triangle under its centre marks
+   the exact time. The invisible ::before widens the hitbox. */
+.ce-ruler-ph {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  padding: 0 5px;
+  height: 13px;
+  line-height: 13px;
+  background: var(--ce-accent);
+  color: #fff;
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  touch-action: none;
+  z-index: 3;
+}
+/* pointer triangle centred under the head box */
+.ce-ruler-ph::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 7px;
+  height: 5px;
+  background: var(--ce-accent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.ce-ruler-ph::before {
+  content: '';
+  position: absolute;
+  inset: -4px -7px -2px;
+}
+
+/* focus–context brush (expanded): the live view window as a gray region on
+   the full-overview ruler — drag the body to pan, the end grips to zoom.
+   Sits under the ticks/badge/ph so labels stay readable. */
+.ce-ruler-brush {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ce-text-2) 30%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ce-text-2) 45%, transparent);
+  cursor: grab;
+  z-index: 1;
+  touch-action: none;
+}
+.ce-ruler-brush:active {
+  cursor: grabbing;
+  background: color-mix(in srgb, var(--ce-text-2) 28%, transparent);
+}
+.ce-ruler-brush-h {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: ew-resize;
+}
+.ce-ruler-brush-h[data-side='l'] {
+  left: -4px;
+}
+.ce-ruler-brush-h[data-side='r'] {
+  right: -4px;
+}
+.ce-ruler-brush-h::after {
+  content: '';
+  position: absolute;
+  top: 15%;
+  bottom: 15%;
+  width: 2.5px;
+  border-radius: 2px;
+  background: var(--ce-text-2);
+}
+.ce-ruler-brush-h[data-side='l']::after {
+  left: 2px;
+}
+.ce-ruler-brush-h[data-side='r']::after {
+  right: 2px;
 }
 
 .ce-track {
   flex: 1;
   min-height: 24px;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--ce-row-grid);
+  column-gap: var(--ce-lane-gap);
   align-items: center;
-  gap: 10px;
 }
+/* the label is a button: GES solo toggle (click = focus channel, click again = show all).
+   The column spans up to the ruler's left edge (under the transport buttons), so
+   name sits left and the live value rides the right — an inspector-style row. */
 .ce-track-label {
   width: var(--lane-label);
   flex: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ce-track-name {
+  max-width: 100%;
   font-size: 11.5px;
   font-weight: 500;
   color: var(--ce-text-2);
@@ -472,6 +630,24 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ce-track-label:hover .ce-track-name {
+  color: var(--ce-text-1);
+}
+.ce-track-label.is-solo .ce-track-name {
+  color: var(--ce-accent);
+}
+/* live attribute value at the playhead (GES-style row readout) */
+.ce-track-value {
+  font-family: var(--ce-font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  color: var(--ce-text-3);
+  white-space: nowrap;
+}
+/* lanes clip horizontally: keys/curves outside the zoom window simply
+   disappear past the edge instead of leaking over neighbouring rows.
+   Same 6px tolerance as the ruler: a key at t=0 / t=duration sits centred on
+   the lane edge and must render whole (full key box ≈ 10px). */
 .ce-track-lane {
   position: relative;
   flex: 1;
@@ -479,6 +655,7 @@
   min-height: 22px;
   border-radius: 5px;
   background: var(--ce-surface-2);
+  clip-path: inset(0 -6px 0 -6px);
 }
 
 .ce-key {
@@ -490,11 +667,26 @@
   background: var(--ce-surface);
   border: 1.5px solid var(--ce-accent);
   border-radius: 1.5px;
-  cursor: pointer;
+  cursor: ew-resize;
   transition: background 120ms ease;
 }
 .ce-key:hover {
   background: var(--ce-accent);
+}
+/* selected keys: accent fill + halo ring (identity color stays untouched) */
+.ce-key.is-selected {
+  background: var(--ce-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ce-accent) 45%, transparent);
+}
+
+/* rubber-band selection rectangle (GES-style marquee) */
+.ce-marquee {
+  position: absolute;
+  border: 1px solid var(--ce-accent);
+  background: color-mix(in srgb, var(--ce-accent) 12%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* ----- growth (reveal) track — AE-style keyframes ----- */
@@ -525,17 +717,52 @@
   background: var(--ce-accent);
 }
 
-/* playhead spans ruler + lanes (offset by the label column) */
+/* Playhead: an axis overlay that spans exactly the lane column (same math
+   the grid rows use, written once), so `left: ph × 100%` is pixel-true.
+   overflow hidden — zoom can push ph outside 0..1; the line parks off-edge. */
+.ce-axis {
+  position: absolute;
+  top: 0;
+  bottom: var(--ce-pad-x);
+  left: calc(var(--ce-pad-x) + var(--lane-label) + var(--ce-lane-gap));
+  /* right edge mirrors the lane scroller's stable gutter (same measured var,
+     so the playhead at 100% lands exactly on the lane column's right edge) */
+  right: calc(var(--ce-tracks-pr) + var(--ce-lanes-gutter, 6px));
+  pointer-events: none;
+  overflow: hidden;
+}
 .ce-playhead {
   position: absolute;
   top: 0;
-  bottom: 12px;
-  left: calc(var(--lane-label) + 10px + (100% - var(--lane-label) - 10px - 24px) * var(--ph));
+  bottom: 0;
+  left: calc(var(--ph) * 100%);
   width: 1.5px;
   margin-left: -0.75px;
   background: var(--ce-accent);
   border-radius: 1px;
   pointer-events: none;
+}
+
+/* focus ticks — the top strip of the axis overlay: the fine (windowed) time
+   labels. The bar ruler above is now a full-overview mini-map (context), so
+   the zoom-aware detail scale lives here, aligned to the lane column. */
+.ce-axis-ticks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  border-bottom: 1px solid var(--ce-border);
+}
+.ce-axis-ticks span {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--ce-text-3);
+  white-space: nowrap;
 }
 
 /* ---------- fullscreen preview ---------- */
@@ -1043,19 +1270,7 @@
   color: var(--ce-text-3);
 }
 
-/* ---------- timeline: scrub keys, action states, render button ---------- */
-
-.ce-scrub-key {
-  position: absolute;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  transform: translate(-50%, -50%) rotate(45deg);
-  background: var(--ce-surface);
-  border: 1.2px solid var(--ce-accent);
-  border-radius: 1px;
-  pointer-events: none;
-}
+/* ---------- timeline: action states, render button ---------- */
 
 .ce-tl-sep {
   width: 1px;
