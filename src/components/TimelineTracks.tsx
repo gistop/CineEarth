@@ -37,9 +37,10 @@ function currentCameraPose(): Pose | null {
        over the stored values, so a raw 359.99 next to a 0 key would spin
        the horizon through a full turn between the two. */
     roll: angleDeltaDeg(0, cam.roll * deg),
-    /* frustum.fov (radians) → deg; non-perspective fallback keeps the default */
+    /* frustum.fov (radians) → deg; Cesium types it optional (a frustum may be
+       built from fovy instead) and non-perspective falls back to the default */
     fov:
-      cam.frustum instanceof PerspectiveFrustum
+      cam.frustum instanceof PerspectiveFrustum && cam.frustum.fov != null
         ? cam.frustum.fov * deg
         : DEFAULT_FOV,
   }
