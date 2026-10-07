@@ -35,6 +35,10 @@ interface UIState {
    *  span = Infinity means "fit all" (the default); the component clamps
    *  start/span against the current route duration on read. */
   tlView: { start: number; span: number }
+  /** timeline DISPLAY unit for the ruler & length field (view-only state).
+   *  'frame' converts through the route fps — a pure label transform, all
+   *  underlying times stay in seconds. */
+  tlUnit: 'sec' | 'frame'
 
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
@@ -49,6 +53,7 @@ interface UIState {
   toggleSunPanel: (open?: boolean) => void
   setTlView: (v: { start: number; span: number }) => void
   resetTlView: () => void
+  setTlUnit: (u: 'sec' | 'frame') => void
 }
 
 export const useUI = create<UIState>((set) => ({
@@ -64,6 +69,7 @@ export const useUI = create<UIState>((set) => ({
   cameraLocked: false,
   sunOpen: false,
   tlView: { start: 0, span: Infinity },
+  tlUnit: 'sec',
 
   toggleDrawer: (open) => set((s) => ({ drawerOpen: open ?? !s.drawerOpen })),
   setDrawerTab: (tab) => set({ drawerTab: tab, drawerOpen: true }),
@@ -80,4 +86,5 @@ export const useUI = create<UIState>((set) => ({
   toggleSunPanel: (open) => set((s) => ({ sunOpen: open ?? !s.sunOpen })),
   setTlView: (v) => set({ tlView: v }),
   resetTlView: () => set({ tlView: { start: 0, span: Infinity } }),
+  setTlUnit: (u) => set({ tlUnit: u }),
 }))

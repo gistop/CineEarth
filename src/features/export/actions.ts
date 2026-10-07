@@ -3,7 +3,7 @@
 import { Cartesian3, Math as CesiumMath } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
-import { samplePose, totalDuration } from '../route/pathMath'
+import { samplePose, timelineDuration, timelineProgressToRoute } from '../route/pathMath'
 import { useRoute } from '../route/routeStore'
 import type { Pose } from '../route/types'
 import { useExport } from './exportStore'
@@ -67,11 +67,13 @@ export async function renderRouteVideo(): Promise<void> {
         useRoute.getState().setProgress(0)
       },
       applyProgress: (progress) => {
-        const p = samplePose(route, progress)
+        /* progress runs over the TIMELINE length — content past the end is
+           simply not rendered, and a longer timeline holds the last pose */
+        const p = samplePose(route, timelineProgressToRoute(route, progress))
         if (p && !camLocked) applyPose(p)
         useRoute.getState().setProgress(progress)
       },
-      frameCount: Math.max(2, Math.round(totalDuration(route) * route.fps)),
+      frameCount: Math.max(2, Math.round(timelineDuration(route) * route.fps)),
       fps: route.fps,
     }
 

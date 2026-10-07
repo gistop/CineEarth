@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useUI, TL_H_DEFAULT } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
-import { totalDuration } from '../features/route/pathMath'
+import { timelineDuration } from '../features/route/pathMath'
 import { useExport } from '../features/export/exportStore'
 import { renderRouteVideo, takeScreenshot } from '../features/export/actions'
 import TimelineTracks, { TimelineRuler, clampView } from './TimelineTracks'
@@ -57,7 +57,8 @@ export default function Timeline() {
   const exportStatus = useExport((s) => s.status)
   const exportProgress = useExport((s) => s.progress)
 
-  const DURATION = Math.max(0.1, totalDuration(route))
+  /* the ruler's domain = the timeline length setting (not the content end) */
+  const DURATION = timelineDuration(route)
   const rendering = exportStatus === 'rendering'
 
   /* live resize of the expanded panel — the top edge is the grip */

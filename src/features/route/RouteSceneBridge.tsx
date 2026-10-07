@@ -17,7 +17,13 @@ import {
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
-import { haversineM, samplePath, samplePose, totalDuration } from './pathMath'
+import {
+  haversineM,
+  samplePath,
+  samplePose,
+  timelineDuration,
+  timelineProgressToRoute,
+} from './pathMath'
 import { evalReveal, useReveal } from './revealStore'
 import { useRoute } from './routeStore'
 import { useExport } from '../export/exportStore'
@@ -181,7 +187,11 @@ export default function RouteSceneBridge() {
   const t0Ref = useRef(0)
 
   const applyPose = (progress: number) => {
-    const pose = samplePose(useRoute.getState().route, progress)
+    /* progress is a TIMELINE fraction; the pose is a CONTENT position — a
+       timeline longer than the content holds the final pose, a shorter one
+       truncates the flight (identity when both are equal) */
+    const route = useRoute.getState().route
+    const pose = samplePose(route, timelineProgressToRoute(route, progress))
     const viewer = getViewer()
     if (pose && viewer) {
       viewer.camera.setView({
@@ -237,7 +247,9 @@ export default function RouteSceneBridge() {
       if (!useUI.getState().playing) return
 
       const s = useRoute.getState()
-      const total = totalDuration(s.route)
+      /* playback clock runs the full TIMELINE (so a length longer than the
+         content plays out its hold, and a shorter one ends at the cut) */
+      const total = timelineDuration(s.route)
       if (total <= 0) return
 
       if (t0Ref.current === 0) t0Ref.current = now - s.progress * total * 1000

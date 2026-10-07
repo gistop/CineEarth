@@ -135,14 +135,33 @@ export function samplePose(route: Route, progress: number): Pose | null {
   return pose
 }
 
-/** total route duration in seconds */
+/** total CONTENT duration in seconds (sum of the waypoint segments) */
 export function totalDuration(route: Route): number {
   return buildSegments(route.waypoints).total
 }
 
-/** total frames for offline rendering (min 2) */
+/** timeline length in seconds — the ruler / playback domain. Falls back to the
+ *  content length for routes authored before the field existed. */
+export function timelineDuration(route: Route): number {
+  const len = route.timelineLen
+  return Math.max(0.1, Number.isFinite(len) && len > 0 ? len : totalDuration(route))
+}
+
+/**
+ * timeline progress (0..1 of the TIMELINE length) → route progress (0..1 of the
+ * CONTENT). A timeline longer than the content therefore holds the final pose
+ * for the leftover time instead of stretching the flight; a shorter one
+ * truncates it. Identity whenever timeline length == content length.
+ */
+export function timelineProgressToRoute(route: Route, progress: number): number {
+  const content = totalDuration(route)
+  if (content <= 0) return 0
+  return clamp((clamp(progress, 0, 1) * timelineDuration(route)) / content, 0, 1)
+}
+
+/** total frames for offline rendering — the TIMELINE length, min 2 */
 export function frameCount(route: Route): number {
-  return Math.max(2, Math.round(totalDuration(route) * route.fps))
+  return Math.max(2, Math.round(timelineDuration(route) * route.fps))
 }
 
 /** cumulative-time fraction of each waypoint — used to place keys on the timeline */

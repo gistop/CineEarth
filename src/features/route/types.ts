@@ -33,6 +33,10 @@ export type Route = {
   loopMode: LoopMode
   /** camera target — null means waypoints' own heading/pitch are used */
   target: TargetPoint | null
+  /** timeline length in SECONDS — the ruler / playback domain. Authoritative:
+   *  it does NOT follow the waypoints. Content past it is kept (never
+   *  destroyed), just out of range until the length grows again. */
+  timelineLen: number
 }
 
 /** Camera pose at an instant (degrees / metres) */
@@ -46,6 +50,8 @@ export type Pose = {
 
 export const DEFAULT_WAYPOINT_DURATION = 3
 export const DEFAULT_FPS = 30
+/** default timeline length for a fresh project (seconds) */
+export const DEFAULT_TIMELINE_LEN = 10
 /** hard ceiling for camera height — keeps Cesium geometry sane (Earth R ≈ 6.37e6 m) */
 export const MAX_WAYPOINT_HEIGHT_M = 100_000
 

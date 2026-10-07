@@ -20,6 +20,9 @@
   --ce-accent-hover: #2e5175;
   --ce-accent-soft: #ebf1f7;
   --ce-danger: #b3563d;
+  /* warning — timeline length shorter than the content (a nudge, not an error) */
+  --ce-warn: #a8802f;
+  --ce-warn-soft: #f7f1e4;
 
   /* shape & depth */
   --ce-radius: 10px;

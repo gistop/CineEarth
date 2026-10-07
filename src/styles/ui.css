@@ -402,13 +402,23 @@
    visible only for the first frame before the observer fires. */
 .ce-tracks {
   --lane-label: calc(var(--ce-tl-axis-l, 220px) - var(--ce-pad-x) - var(--ce-lane-gap));
+  /* Room for a key CENTRED on the 0% / 100% tick. A key is a 7px box turned
+     45° — ≈9.9px across, so ≈4.95px of it hangs past its tick — and the
+     selected halo (2px spread) takes that to ≈7.8px. 10px = --ce-lane-gap,
+     i.e. the same room the label column already gives the 0% end, so both
+     ends are symmetric. This is REAL room, not a nudge of the key: it is
+     carved out of the free strip right of the ruler (the settings column
+     gives up exactly this much, and the scrollbar gutter is pushed past it). */
+  --ce-lane-key-room: 10px;
   /* lanes must END at the ruler's right edge: right padding = the ruler's
-     right offset minus the gutter the lane scroller reserves. The gutter is
-     MEASURED (TimelineTracks.tsx → --ce-lanes-gutter), never assumed: with
-     `scrollbar-width: thin` set, Chrome ignores ::-webkit-scrollbar widths
-     and sizes the gutter itself, so a hardcoded 6px left the lane column
-     short of the ruler's right edge. */
-  --ce-tracks-pr: calc(var(--ce-tl-axis-r, 30px) - var(--ce-lanes-gutter, 6px));
+     right offset minus the gutter the lane scroller reserves minus the key
+     room above. The gutter is MEASURED (TimelineTracks.tsx →
+     --ce-lanes-gutter), never assumed: with `scrollbar-width: thin` set,
+     Chrome ignores ::-webkit-scrollbar widths and sizes the gutter itself,
+     so a hardcoded 6px left the lane column short of the ruler's right edge. */
+  --ce-tracks-pr: calc(
+    var(--ce-tl-axis-r, 30px) - var(--ce-lanes-gutter, 6px) - var(--ce-lane-key-room)
+  );
   --ce-lane-gap: 10px;
   --ce-pad-x: 12px;
   --ce-row-grid: var(--lane-label) minmax(0, 1fr);
@@ -451,6 +461,142 @@
    selection survive); the bar's ruler keeps covering scrubbing */
 .ce-timeline[data-expanded='false'] .ce-tracks {
   display: none;
+}
+
+/* project settings column — the free strip RIGHT of the lane grid, level
+   with the track rows (sits under the bar's action group). Absolute overlay
+   inside .ce-tracks: it borrows exactly the space the lanes' right padding
+   already reserves (--ce-tracks-pr, which now also carries the lane key room),
+   so its left edge starts just right of the scrollbar gutter — past the key
+   room and past the bar itself, never overlapping either. Hides with the
+   tracks when collapsed (plain child of .ce-tracks). */
+.ce-tl-settings {
+  position: absolute;
+  /* top-aligned with the FIRST track row — that row starts at
+     tracks padding-top 4px + lanes margin-top 14px (the focus-tick band) */
+  top: 18px;
+  right: 0;
+  bottom: var(--ce-pad-x);
+  width: var(--ce-tracks-pr);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0 var(--ce-pad-x) 0 10px;
+  overflow: hidden;
+  /* the tracks root kills text selection — inputs must keep it */
+  user-select: text;
+}
+.ce-tl-set {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ce-tl-set-name {
+  /* the `!` fix button hugs the name it fixes — pinned to the far edge of a
+     strip this wide it read as an orphan */
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--ce-text-3);
+}
+.ce-tl-set-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ce-tl-num,
+.ce-tl-sel {
+  /* the strip is the lane grid's reserved right padding — far wider than a
+     field needs, so rows STRETCH instead of hugging the left: all three then
+     share one left AND one right edge (no ragged stack, no dead half-strip) */
+  height: 22px;
+  min-width: 0;
+  padding: 0 5px;
+  font-family: var(--ce-font-mono);
+  font-size: 11px;
+  color: var(--ce-text);
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border-strong);
+  border-radius: var(--ce-radius-sm);
+}
+.ce-tl-num {
+  flex: 1 1 auto;
+  width: auto;
+  text-align: right;
+}
+/* 越界 state (expanded only — the whole column hides with the tracks): the
+   content outruns the timeline, so keys are off-range. Amber, not red — it is
+   a nudge, not an error. */
+.ce-tl-num.is-over,
+.ce-tl-num.is-over:focus {
+  color: var(--ce-warn);
+  border-color: var(--ce-warn);
+}
+/* the fix (and only the fix) hugs the 长度 name, right where it applies */
+.ce-tl-warn {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ce-warn);
+  background: var(--ce-warn-soft);
+  border: 1px solid var(--ce-warn);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.ce-tl-warn:hover {
+  color: var(--ce-surface);
+  background: var(--ce-warn);
+}
+.ce-tl-sel {
+  /* the unit picker keeps a fixed narrow width beside its number field… */
+  flex: none;
+  width: 54px;
+  cursor: pointer;
+}
+/* …but a select that owns its row outright (帧率) fills it, so it ends on the
+   same right edge as the two-field rows above and below */
+.ce-tl-set-row > .ce-tl-sel:only-child {
+  flex: 1 1 auto;
+  width: auto;
+}
+.ce-tl-num:focus,
+.ce-tl-sel:focus {
+  outline: none;
+  border-color: var(--ce-accent);
+}
+.ce-tl-x {
+  flex: none;
+  font-size: 10px;
+  color: var(--ce-text-3);
+}
+/* 时长 modifier row — "缩放" checkbox under the length field. Full label is
+   long ("将现有关键帧的时长调节到新时长"), so the strip shows 2 chars and the
+   tooltip carries the wording. */
+.ce-tl-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--ce-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ce-tl-check input {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--ce-accent);
+  cursor: pointer;
 }
 
 /* the ruler's permanent home in the bar (both states): fills the middle,
@@ -602,6 +748,13 @@
   grid-template-columns: var(--ce-row-grid);
   column-gap: var(--ce-lane-gap);
   align-items: center;
+  /* The lane column must END on the ruler's 100% tick, yet a key centred on
+     that tick paints its outer ≈7.8px PAST it. So the row keeps
+     --ce-lane-key-room of its own width empty on the right: the lane (its
+     background and radius) still stops exactly on the tick, and the key's ink
+     lands in this room — inside the scroller's clipped area but ahead of its
+     scrollbar gutter, so the bar can never be painted over a key. */
+  padding-right: var(--ce-lane-key-room);
 }
 /* the label is a button: GES solo toggle (click = focus channel, click again = show all).
    The column spans up to the ruler's left edge (under the transport buttons), so
@@ -646,8 +799,10 @@
 }
 /* lanes clip horizontally: keys/curves outside the zoom window simply
    disappear past the edge instead of leaking over neighbouring rows.
-   Same 6px tolerance as the ruler: a key at t=0 / t=duration sits centred on
-   the lane edge and must render whole (full key box ≈ 10px). */
+   The clip edge sits --ce-lane-key-room OUTSIDE the box on both x sides, so a
+   key at t=0 / t=duration — CENTRED on the lane edge, ≈9.9px across, ≈15.6px
+   with its selection halo — renders whole. On the left that room is the label
+   gap, on the right the row's own padding (see .ce-track). */
 .ce-track-lane {
   position: relative;
   flex: 1;
@@ -655,7 +810,9 @@
   min-height: 22px;
   border-radius: 5px;
   background: var(--ce-surface-2);
-  clip-path: inset(0 -6px 0 -6px);
+  clip-path: inset(
+    0 calc(-1 * var(--ce-lane-key-room)) 0 calc(-1 * var(--ce-lane-key-room))
+  );
 }
 
 .ce-key {
@@ -718,17 +875,25 @@
 }
 
 /* Playhead: an axis overlay that spans exactly the lane column (same math
-   the grid rows use, written once), so `left: ph × 100%` is pixel-true.
-   overflow hidden — zoom can push ph outside 0..1; the line parks off-edge. */
+   the grid rows use, written once), so `left: ph × 100%` is pixel-true. */
 .ce-axis {
   position: absolute;
   top: 0;
   bottom: var(--ce-pad-x);
   left: calc(var(--ce-pad-x) + var(--lane-label) + var(--ce-lane-gap));
-  /* right edge mirrors the lane scroller's stable gutter (same measured var,
-     so the playhead at 100% lands exactly on the lane column's right edge) */
-  right: calc(var(--ce-tracks-pr) + var(--ce-lanes-gutter, 6px));
+  /* right edge mirrors the lane scroller's stable gutter AND the row's key
+     room — both are now inside --ce-tracks-pr — so the playhead at 100% still
+     lands exactly on the lane column's right edge */
+  right: calc(
+    var(--ce-tracks-pr) + var(--ce-lane-key-room) + var(--ce-lanes-gutter, 6px)
+  );
   pointer-events: none;
+}
+/* the playhead's own clip box: zoom can push ph outside 0..1 — the line parks
+   off-edge. Exactly the axis box, so `ph × 100%` stays pixel-true. */
+.ce-axis-ph {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
 }
 .ce-playhead {
@@ -753,6 +918,14 @@
   right: 0;
   height: 14px;
   border-bottom: 1px solid var(--ce-border);
+  /* EVERY label is centred on its tick — including the ones at 0% / 100%.
+     The strip clips with a margin instead of a hard edge, so the end labels
+     bleed out complete instead of being sliced in half; anything past the
+     margin is still cut. The bleed lands in the empty band above the row
+     labels (left) and above the settings strip (right) — nothing lives at
+     this strip's height on either side. */
+  overflow: clip;
+  overflow-clip-margin: 20px;
 }
 .ce-axis-ticks span {
   position: absolute;

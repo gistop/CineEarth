@@ -2,9 +2,16 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { useReveal } from '../features/route/revealStore'
-import { samplePose, totalDuration, waypointFractions } from '../features/route/pathMath'
+import {
+  samplePose,
+  timelineDuration,
+  timelineProgressToRoute,
+  totalDuration,
+  waypointFractions,
+} from '../features/route/pathMath'
 import { DEFAULT_WAYPOINT_DURATION } from '../features/route/types'
 import { cameraChannelKeys, formatChannelValue, type ChannelId, type ChannelKey } from '../features/route/cameraChannels'
+import TimelineSettings from './TimelineSettings'
 
 /**
  * Expanded multi-track editor (GES-style).
@@ -30,7 +37,10 @@ type DragState = {
   startX: number
   startY: number
   laneW: number
+  /** CONTENT length (seconds) — wp/growth base fractions are fractions of it */
   total: number
+  /** TIMELINE length (seconds) — the domain the px→time delta rides */
+  timeline: number
   /** visible span at drag start — px→time conversion depends on the zoom level */
   viewSpan: number
   /** waypoint time fractions at drag start (feedback-free snapshot) */
@@ -72,12 +82,15 @@ export function TimelineRuler({ view }: { view?: TlView }) {
   const setScrubbing = useUI((s) => s.setScrubbing)
   const setTlView = useUI((s) => s.setTlView)
   const resetTlView = useUI((s) => s.resetTlView)
+  /* display unit — 'frame' re-labels ticks/readouts through route fps */
+  const tlUnit = useUI((s) => s.tlUnit)
 
   const laneRef = useRef<HTMLDivElement>(null)
   /* active brush gesture (expanded only) */
   const brushRef = useRef<BrushDrag | null>(null)
 
-  const DURATION = Math.max(0.1, totalDuration(route))
+  /* the TIMELINE domain (settings 长度) — authoritative, not the content end */
+  const DURATION = timelineDuration(route)
   /* focus–context: ALWAYS the full-overview mapping — the window is drawn
    *  as the brush overlay, the ruler itself never re-scales */
   const pct = (tSec: number) => (tSec / DURATION) * 100
@@ -217,7 +230,8 @@ export function TimelineRuler({ view }: { view?: TlView }) {
         if (view) resetTlView()
       }}
       onKeyDown={(e) => {
-        const step = 0.5 / DURATION // 0.5s per keypress
+        /* step: one frame in frame unit, else 0.5 s per keypress */
+        const step = (tlUnit === 'frame' ? 1 / route.fps : 0.5) / DURATION
         if (e.key === 'ArrowLeft') setProgress(progress - step)
         else if (e.key === 'ArrowRight') setProgress(progress + step)
         else if (e.key === 'Home') setProgress(0)
@@ -249,24 +263,52 @@ export function TimelineRuler({ view }: { view?: TlView }) {
           className={`ce-ruler-tick${s === 0 ? ' is-zero' : ''}`}
           style={{ left: `${pct(s)}%` }}
         >
-          {formatTick(s)}
+          {formatTick(s, tlUnit, route.fps)}
         </span>
       ))}
-      {/* GES-style playhead handle — wide head carries the seconds readout,
-          small pointer underneath marks the exact time. Draggable as before. */}
+      {/* GES-style playhead handle — wide head carries the time readout
+          (seconds, or the frame number in frame unit), small pointer
+          underneath marks the exact time. Draggable as before. */}
       <span className="ce-ruler-ph" style={{ left: `${phLeft}%` }} aria-hidden="true">
-        {(progress * DURATION).toFixed(1)}
+        {tlUnit === 'frame' ? Math.round(progress * DURATION * route.fps) : (progress * DURATION).toFixed(1)}
       </span>
     </div>
   )
 }
 
-/** nice-step ticks for a view window — step chosen so labels never collide */
+/** nice-step ticks for a view window — step chosen so labels never collide.
+ *  Frame unit picks steps in whole FRAMES (then maps back to seconds) so
+ *  labels stay integers for any fps (e.g. 0.1 s × 25 fps = 2.5 would not). */
 const TICK_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+const FRAME_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 3000]
 
-function ticksFor(view: TlView, laneW: number, duration: number): number[] {
+type TlUnit = 'sec' | 'frame'
+
+function ticksFor(view: TlView, laneW: number, duration: number, fps: number, unit: TlUnit): number[] {
   const pxPerSec = laneW > 0 ? laneW / view.span : view.span
   const minGap = 54 // px between label centres
+
+  if (unit === 'frame') {
+    const pxPerFrame = pxPerSec / fps
+    let stepF = FRAME_STEPS[FRAME_STEPS.length - 1]
+    for (const f of FRAME_STEPS) {
+      if (f * pxPerFrame >= minGap) {
+        stepF = f
+        break
+      }
+    }
+    const firstF = Math.ceil((view.start * fps) / stepF - 1e-6) * stepF
+    const out: number[] = []
+    for (
+      let f = firstF;
+      f <= (view.start + view.span) * fps + 1e-6 && f <= duration * fps + 1e-6;
+      f += stepF
+    ) {
+      out.push(Math.round((f / fps) * 1000) / 1000)
+    }
+    return out
+  }
+
   let step = TICK_STEPS[TICK_STEPS.length - 1]
   for (const s of TICK_STEPS) {
     if (s * pxPerSec >= minGap) {
@@ -282,7 +324,8 @@ function ticksFor(view: TlView, laneW: number, duration: number): number[] {
   return out
 }
 
-function formatTick(t: number): string {
+function formatTick(t: number, unit: TlUnit, fps: number): string {
+  if (unit === 'frame') return String(Math.round(t * fps))
   return `${t % 1 === 0 ? t : t.toFixed(1)}s`
 }
 
@@ -316,6 +359,7 @@ export default function TimelineTracks() {
   const updateWaypoint = useRoute((s) => s.updateWaypoint)
   const tlView = useUI((s) => s.tlView)
   const setTlView = useUI((s) => s.setTlView)
+  const tlUnit = useUI((s) => s.tlUnit)
 
   const growthLine = useReveal((s) => s.growthLine)
   const revealKeys = useReveal((s) => s.keys)
@@ -323,7 +367,11 @@ export default function TimelineTracks() {
   const moveRevealKey = useReveal((s) => s.moveKey)
   const removeRevealKey = useReveal((s) => s.removeKey)
 
-  const DURATION = Math.max(0.1, totalDuration(route))
+  /* TIMELINE domain (settings 长度) vs CONTENT end: camera keys live at their
+   *  absolute seconds inside the content, everything is drawn in timeline
+   *  seconds. Equal whenever 长度 == content length (the common case). */
+  const DURATION = timelineDuration(route)
+  const content = totalDuration(route)
   /* effective viewport — clamped on read so route edits (duration changes)
    * can never leave a stale out-of-range window */
   const { start: viewStart, span: viewSpan } = clampView(tlView, DURATION)
@@ -331,7 +379,9 @@ export default function TimelineTracks() {
   /** seconds → lane percent under the current window */
   const pct = (tSec: number) => ((tSec - viewStart) / viewSpan) * 100
   const channels = cameraChannelKeys(route)
-  const pose = samplePose(route, progress)
+  /* channel readouts follow the playhead pose — through the timeline mapping,
+     so a longer timeline holds the final pose instead of stretching it */
+  const pose = samplePose(route, timelineProgressToRoute(route, progress))
   const sortedRevealKeys = [...revealKeys].sort((a, b) => a.t - b.t)
 
   /* ----- rubber-band selection & key dragging (container-level) ----- */
@@ -382,6 +432,8 @@ export default function TimelineTracks() {
     const root = rootRef.current
     if (!root) return
     const onWheel = (e: WheelEvent) => {
+      /* the settings column owns its own scroll/hover — never zoom through it */
+      if ((e.target as HTMLElement).closest('.ce-tl-settings')) return
       const ax = axisRef.current
       if (!ax) return
       const r = ax.getBoundingClientRect()
@@ -402,7 +454,7 @@ export default function TimelineTracks() {
       useRoute.subscribe((s) => {
         const { playing, scrubbing, tlView: v } = useUI.getState()
         if (!playing || scrubbing) return
-        const dur = Math.max(0.1, totalDuration(s.route))
+        const dur = timelineDuration(s.route)
         const span = Math.min(Math.max(v.span, MIN_VIEW), dur)
         if (span >= dur) return // fit-all — nothing to pan
         const t = s.progress * dur
@@ -478,7 +530,10 @@ export default function TimelineTracks() {
         startX: e.clientX,
         startY: e.clientY,
         laneW: (lane?.getBoundingClientRect().width) || 1,
-        total: DURATION,
+        /* wp/growth base fractions are fractions of the CONTENT, while the
+           px→time delta rides the TIMELINE view span */
+        total: content,
+        timeline: DURATION,
         viewSpan,
         baseFractions: waypointFractions(route),
         wpIds: route.waypoints.map((w) => w.id),
@@ -488,7 +543,8 @@ export default function TimelineTracks() {
       return
     }
 
-    if ((e.target as HTMLElement).closest('button')) return
+    /* form controls (settings column) own their clicks — no marquee there */
+    if ((e.target as HTMLElement).closest('button, input, select, .ce-tl-settings')) return
     // empty area → marquee (4px threshold keeps plain clicks / dblclick intact)
     marqueeStartRef.current = { x: e.clientX, y: e.clientY, moved: false }
     setMarquee({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY })
@@ -530,12 +586,13 @@ export default function TimelineTracks() {
 
   /** move all selected keys in time; wp keys commit as segment durations */
   const applyDrag = (d: DragState, cx: number, cy: number) => {
-    /* px → fraction-of-total goes through the visible span (zoom-aware) */
-    const df = ((cx - d.startX) / d.laneW) * (d.viewSpan / d.total)
+    /* px → SECONDS through the visible span (zoom-aware): clock seconds are
+       the same unit in both domains, only the BASE values differ — waypoints
+       sit at absolute content seconds, growth keys are timeline fractions */
+    const ds = ((cx - d.startX) / d.laneW) * d.viewSpan
     const sel = [...selected]
 
     if (d.kind === 'wp') {
-      const ds = df * d.total
       const times = d.baseFractions.map((t) => t * d.total)
       sel.forEach((id) => {
         if (!id.startsWith('wp:')) return
@@ -561,7 +618,8 @@ export default function TimelineTracks() {
       if (!id.startsWith('gr:')) return
       const base = d.growthBase.find((g) => g.id === id.slice(3))
       if (!base) return
-      const t = Math.min(1, Math.max(0, base.t + df))
+      /* growth keys ride the TIMELINE, not the content */
+      const t = Math.min(1, Math.max(0, base.t + ds / d.timeline))
       const value = single
         ? Math.min(100, Math.max(0, base.value - (cy - d.startY) * 0.5))
         : base.value
@@ -595,7 +653,8 @@ export default function TimelineTracks() {
           onToggle={toggleSolo}
           selected={selected}
           keys={route.waypoints.map((_, i) => ({
-            left: pct((channels.lon[i]?.t ?? 0) * DURATION),
+            /* content seconds — keys keep their ABSOLUTE times when 长度 changes */
+            left: pct((channels.lon[i]?.t ?? 0) * content),
             title: `Waypoint ${i + 1}`,
             keyId: wpId(i),
           }))}
@@ -610,7 +669,7 @@ export default function TimelineTracks() {
           solo={solo}
           onToggle={toggleSolo}
           selected={selected}
-          keys={keySpans(channels.lon, 'lon', DURATION, pct)}
+          keys={keySpans(channels.lon, 'lon', content, pct)}
         />
       )}
       {show('lat') && (
@@ -621,7 +680,7 @@ export default function TimelineTracks() {
           solo={solo}
           onToggle={toggleSolo}
           selected={selected}
-          keys={keySpans(channels.lat, 'lat', DURATION, pct)}
+          keys={keySpans(channels.lat, 'lat', content, pct)}
         />
       )}
       {show('height') && (
@@ -632,7 +691,7 @@ export default function TimelineTracks() {
           solo={solo}
           onToggle={toggleSolo}
           selected={selected}
-          keys={keySpans(channels.height, 'height', DURATION, pct)}
+          keys={keySpans(channels.height, 'height', content, pct)}
         />
       )}
       {show('fov') && (
@@ -692,10 +751,17 @@ export default function TimelineTracks() {
           solo={solo}
           onToggle={toggleSolo}
           selected={selected}
-          keys={keySpans(channels.heading, 'heading', DURATION, pct)}
+          keys={keySpans(channels.heading, 'heading', content, pct)}
         />
       )}
       </div>
+
+      {/* project settings column — the free strip right of the lane grid
+          (level with the track rows, under the bar's action group):
+          长度 (秒/帧) · 帧率 · 尺寸. It borrows exactly the space the lanes'
+          right padding reserves (--ce-tracks-pr), so the grid stays aligned.
+          UI-only for now: edits stay local, no store wiring. */}
+      <TimelineSettings />
 
       {/* axis overlay — spans exactly the lane column; --ph goes through the
           view window so zoom keeps the line pixel-true (clipped at edges).
@@ -708,13 +774,15 @@ export default function TimelineTracks() {
         aria-hidden="true"
       >
         <div className="ce-axis-ticks">
-          {ticksFor(view, axisW, DURATION).map((s) => (
+          {ticksFor(view, axisW, DURATION, route.fps, tlUnit).map((s) => (
             <span key={s} style={{ left: `${((s - viewStart) / viewSpan) * 100}%` }}>
-              {formatTick(s)}
+              {formatTick(s, tlUnit, route.fps)}
             </span>
           ))}
         </div>
-        <div className="ce-playhead" />
+        <div className="ce-axis-ph">
+          <div className="ce-playhead" />
+        </div>
       </div>
 
       {marqueeBox && rootRect && (

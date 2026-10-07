@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { haversineM, samplePath, samplePose } from './pathMath'
+import { haversineM, samplePath, samplePose, timelineProgressToRoute } from './pathMath'
 import { useRoute } from './routeStore'
 import { MAX_WAYPOINT_HEIGHT_M, type Route } from './types'
 import { ExpandIcon, MinusIcon, PlusIcon } from '../../components/Icons'
@@ -164,10 +164,13 @@ export default function RouteSideView({ route }: { route: Route }) {
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${sx(p.d).toFixed(1)} ${sy(p.h).toFixed(1)}`)
     .join(' ')
 
-  const headPose = samplePose(route, progress)
+  /* the playhead is a TIMELINE fraction — convert to the CONTENT fraction the
+     profile is keyed by, so the dot tracks the globe and the 3D camera */
+  const rp = timelineProgressToRoute(route, progress)
+  const headPose = samplePose(route, rp)
   const headPt = headPose
     ? {
-        x: sx(distanceAt(progress)),
+        x: sx(distanceAt(rp)),
         y: sy(headPose.height),
       }
     : null
