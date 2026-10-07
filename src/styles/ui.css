@@ -483,7 +483,13 @@
   justify-content: flex-start;
   gap: 12px;
   padding: 0 var(--ce-pad-x) 0 10px;
-  overflow: hidden;
+  /* the column is ABSOLUTELY sized (top…bottom), so a short timeline would
+     clip the lower rows unreachably. Auto lets it scroll on demand; the
+     wheel handler in TimelineTracks already stands aside for this strip, so
+     the gesture reaches the native scroller. overflow-x stays hidden — the
+     rows never scroll sideways. */
+  overflow-y: auto;
+  overflow-x: hidden;
   /* the tracks root kills text selection — inputs must keep it */
   user-select: text;
 }
@@ -524,7 +530,11 @@
   border-radius: var(--ce-radius-sm);
 }
 .ce-tl-num {
-  flex: 1 1 auto;
+  /* basis 0 (not auto) so multiple fields in ONE row split the free space
+     EQUALLY — with `auto` the flex base is the input's intrinsic (size-based)
+     width, which leaves the pair in 尺寸 visibly unequal. A lone field beside
+     the 54px unit picker still fills the rest of its row identically. */
+  flex: 1 1 0;
   width: auto;
   text-align: right;
 }
@@ -571,6 +581,22 @@
 .ce-tl-sel:focus {
   outline: none;
   border-color: var(--ce-accent);
+}
+/* read-only stat chip (关键帧 count) — same geometry as the fields around it,
+   minus every input affordance */
+.ce-tl-stat {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 0;
+  height: 22px;
+  padding: 0 5px;
+  font-family: var(--ce-font-mono);
+  font-size: 11px;
+  color: var(--ce-text-2);
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
 }
 .ce-tl-x {
   flex: none;
@@ -759,9 +785,18 @@
 /* the label is a button: GES solo toggle (click = focus channel, click again = show all).
    The column spans up to the ruler's left edge (under the transport buttons), so
    name sits left and the live value rides the right — an inspector-style row. */
+/* left cell of a track row: solo-label + insert-kf button. The lane column
+   stays pinned to the ruler's 0 tick, so the button lives INSIDE the label
+   column (GES-style attribute row), never in a column of its own. */
+.ce-track-side {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
 .ce-track-label {
-  width: var(--lane-label);
-  flex: none;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -796,6 +831,42 @@
   line-height: 1;
   color: var(--ce-text-3);
   white-space: nowrap;
+}
+/* insert-keyframe button — VISUAL ONLY for now. A hollow keyframe diamond
+   (same 7px rotated square as the lane keys) that fills on hover; quiet
+   grey at rest, accent on hover. */
+.ce-kf-add {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ce-text-3);
+  cursor: pointer;
+}
+.ce-kf-add:not(:disabled):hover {
+  color: var(--ce-accent);
+  background: var(--ce-surface-2);
+}
+.ce-kf-dot {
+  width: 7px;
+  height: 7px;
+  transform: rotate(45deg);
+  border: 1.5px solid currentColor;
+  border-radius: 1.5px;
+  transition: background 120ms ease;
+}
+.ce-kf-add:not(:disabled):hover .ce-kf-dot {
+  background: currentColor;
+}
+/* channels without a data model (FOV) render disabled — quiet, inert */
+.ce-kf-add:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 /* lanes clip horizontally: keys/curves outside the zoom window simply
    disappear past the edge instead of leaking over neighbouring rows.

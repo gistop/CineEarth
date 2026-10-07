@@ -2,7 +2,12 @@
 // Catmull-Rom position smoothing + shortest-arc angle blending + track stats.
 
 import {
+  DEFAULT_FOV,
+  DEFAULT_WP_PITCH,
   DEFAULT_WAYPOINT_DURATION,
+  hasPosition,
+  type InsertStrategy,
+  type LoopMode,
   type Pose,
   type Route,
   type TargetPoint,
@@ -86,50 +91,114 @@ function aimAtTarget(pose: Pose, target: TargetPoint): void {
   )
 }
 
+/** absolute on-chain time of each waypoint, index-aligned (times[i] = when
+ *  waypoint i sits). Shared by sampling & key placement. */
+function waypointTimes(waypoints: Waypoint[]): { times: number[]; total: number } {
+  const times = [0]
+  let total = 0
+  for (let i = 0; i < waypoints.length - 1; i += 1) {
+    total += Math.max(0.1, waypoints[i].duration || DEFAULT_WAYPOINT_DURATION)
+    times.push(total)
+  }
+  return { times, total }
+}
+
+const smoothstep = (local: number) => {
+  const c = clamp(local, 0, 1)
+  return c * c * (3 - 2 * c)
+}
+
+type AngleChannel = 'heading' | 'pitch' | 'roll' | 'fov'
+
+/** an angle channel evaluated at an absolute chain time over its own key
+ *  subchain (heading shortest-arc, pitch/roll/fov linear, ends held); a
+ *  waypoint's sample value is its EXPLICIT key, else its implicitAngles
+ *  capture (position-key full-pose). Null when neither exists anywhere */
+function channelValueAt(
+  waypoints: Waypoint[],
+  times: number[],
+  time: number,
+  channel: AngleChannel,
+): number | null {
+  const keys = waypoints
+    .map((w, i) => ({ v: w[channel] ?? w.implicitAngles?.[channel], t: times[i] }))
+    .filter((k): k is { v: number; t: number } => k.v != null)
+  if (keys.length === 0) return null
+  if (keys.length === 1 || time <= keys[0].t) return keys[0].v
+  if (time >= keys[keys.length - 1].t) return keys[keys.length - 1].v
+  let i = 1
+  while (i < keys.length && keys[i].t < time) i += 1
+  const a = keys[i - 1]
+  const b = keys[i]
+  const eased = smoothstep((time - a.t) / Math.max(b.t - a.t, 1e-6))
+  const delta = channel === 'heading' ? angleDeltaDeg(a.v, b.v) : b.v - a.v
+  return a.v + delta * eased
+}
+
+/** heading/pitch/roll at route progress, independent of the position group —
+ *  null when that channel has no keys anywhere */
+export function sampleAngleChannel(
+  route: Route,
+  progress: number,
+  channel: AngleChannel,
+): number | null {
+  const { waypoints } = route
+  if (waypoints.length === 0) return null
+  const { times, total } = waypointTimes(waypoints)
+  return channelValueAt(waypoints, times, clamp(progress, 0, 1) * total, channel)
+}
+
 /**
- * Sample the camera pose at progress ∈ [0,1].
- * Position (lon/lat/height) via Catmull-Rom, angles via shortest-arc lerp,
- * local segment time eased with smoothstep (no pose snapping at waypoints).
+ * Sample the camera pose at progress ∈ [0,1]. Each channel group interpolates
+ * over ITS OWN key subchain (waypoints carrying that field):
+ *   position group — Catmull-Rom over the positioned waypoints (none → null)
+ *   heading / pitch / roll / fov — independent shortest-arc / linear
+ *   blends; a channel with no keys anywhere falls back to its default
+ * Outside the first/last key of a subchain the end value is held. Time
+ * inside a subchain segment is eased with smoothstep, exactly as the
+ * original bundled model (identical output when every waypoint is full).
  */
 export function samplePose(route: Route, progress: number): Pose | null {
   const { waypoints } = route
   if (waypoints.length === 0) return null
-  if (waypoints.length === 1) {
-    const w = waypoints[0]
-    return { lon: w.lon, lat: w.lat, height: w.height, heading: w.heading, pitch: w.pitch }
-  }
 
-  const { segments, total } = buildSegments(waypoints)
+  const { times, total } = waypointTimes(waypoints)
   const time = clamp(progress, 0, 1) * total
-  let segment = segments[segments.length - 1]
-  for (const candidate of segments) {
-    if (time <= candidate.endTime || candidate === segments[segments.length - 1]) {
-      segment = candidate
-      break
+
+  /* ---- position group ---- */
+  const pos = waypoints
+    .map((w, i) => ({ w, t: times[i] }))
+    .filter((k) => hasPosition(k.w))
+  if (pos.length === 0) return null
+
+  const pick = (k: { w: Waypoint }) => ({ lon: k.w.lon!, lat: k.w.lat!, height: k.w.height! })
+  let place: { lon: number; lat: number; height: number }
+  if (pos.length === 1 || time <= pos[0].t) {
+    place = pick(pos[0])
+  } else if (time >= pos[pos.length - 1].t) {
+    place = pick(pos[pos.length - 1])
+  } else {
+    let i = 1
+    while (i < pos.length && pos[i].t < time) i += 1
+    const b = pos[i - 1]
+    const c = pos[i]
+    const eased = smoothstep((time - b.t) / Math.max(c.t - b.t, 1e-6))
+    const a = pos[i - 2] ?? b
+    const d = pos[i + 1] ?? c
+    place = {
+      lon: catmullRom(a.w.lon!, b.w.lon!, c.w.lon!, d.w.lon!, eased),
+      lat: catmullRom(a.w.lat!, b.w.lat!, c.w.lat!, d.w.lat!, eased),
+      height: Math.max(0, catmullRom(a.w.height!, b.w.height!, c.w.height!, d.w.height!, eased)),
     }
   }
 
-  const previous = segments[segments.indexOf(segment) - 1]
-  const segStart = previous ? previous.endTime : 0
-  const rawLocal = segment.endTime > segStart ? (time - segStart) / (segment.endTime - segStart) : 1
-  const eased = (() => {
-    const local = clamp(rawLocal, 0, 1)
-    return local * local * (3 - 2 * local)
-  })()
-
-  const i = segment.startIndex
-  const at = (offset: number) => waypoints[clamp(i + offset, 0, waypoints.length - 1)]
-  const a = at(-1)
-  const b = at(0)
-  const c = at(1)
-  const d = at(2)
-
+  /* ---- independent angle channels ---- */
   const pose: Pose = {
-    lon: catmullRom(a.lon, b.lon, c.lon, d.lon, eased),
-    lat: catmullRom(a.lat, b.lat, c.lat, d.lat, eased),
-    height: Math.max(0, catmullRom(a.height, b.height, c.height, d.height, eased)),
-    heading: normalizeAngleDeg(b.heading + angleDeltaDeg(b.heading, c.heading) * eased),
-    pitch: b.pitch + (c.pitch - b.pitch) * eased,
+    ...place,
+    heading: channelValueAt(waypoints, times, time, 'heading') ?? 0,
+    pitch: channelValueAt(waypoints, times, time, 'pitch') ?? DEFAULT_WP_PITCH,
+    roll: channelValueAt(waypoints, times, time, 'roll') ?? 0,
+    fov: channelValueAt(waypoints, times, time, 'fov') ?? DEFAULT_FOV,
   }
   if (route.target) aimAtTarget(pose, route.target)
   return pose
@@ -138,6 +207,71 @@ export function samplePose(route: Route, progress: number): Pose | null {
 /** total CONTENT duration in seconds (sum of the waypoint segments) */
 export function totalDuration(route: Route): number {
   return buildSegments(route.waypoints).total
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000
+
+/** number of TIMED segments for a route: 'once' never flies the last
+ *  waypoint's segment (its duration is a don't-care); loop modes close the
+ *  circle back to the first waypoint, so every waypoint carries one */
+function timedSegments(n: number, loopMode: LoopMode): number {
+  return loopMode === 'once' ? Math.max(0, n - 1) : n
+}
+
+/**
+ * Fresh durations for every waypoint AFTER a new one was appended, per the
+ * insert strategy ('fixed' returns null — the new segment just keeps the
+ * constant default). Pure; the store applies the result.
+ *   even     — timelineLen / segments: the last key always lands exactly on
+ *              the ruler end, existing manual timings are flattened
+ *   distance — segments share the timeline length proportionally to their
+ *              great-circle ground distance (loop modes include the closing
+ *              last → first segment); degenerates to even when points coincide
+ * The don't-care tail (last waypoint in 'once') still gets the even value so
+ * the field never holds a stale number.
+ */
+export function retimeOnInsert(
+  waypoints: Waypoint[],
+  timelineLen: number,
+  loopMode: LoopMode,
+  strategy: InsertStrategy,
+): number[] | null {
+  const n = waypoints.length
+  const segs = timedSegments(n, loopMode)
+  if (strategy === 'fixed' || segs <= 0) return null
+
+  const even = Math.max(0.1, round3(timelineLen / segs))
+  if (strategy !== 'distance') return waypoints.map(() => even)
+
+  const segDist: number[] = []
+  /* pose-only waypoints have no ground distance — those segments count as 0
+     (the even split covers them once the total degenerates) */
+  for (let i = 0; i < n - 1; i += 1) {
+    const a = waypoints[i]
+    const b = waypoints[i + 1]
+    segDist.push(
+      a.lon != null && a.lat != null && b.lon != null && b.lat != null
+        ? haversineM(a.lon, a.lat, b.lon, b.lat)
+        : 0,
+    )
+  }
+  if (loopMode !== 'once') {
+    const first = waypoints[0]
+    const last = waypoints[n - 1]
+    segDist.push(
+      first.lon != null && first.lat != null && last.lon != null && last.lat != null
+        ? haversineM(last.lon, last.lat, first.lon, first.lat)
+        : 0,
+    )
+  }
+  const total = segDist.reduce((sum, d) => sum + d, 0)
+  if (total <= 0) return waypoints.map(() => even)
+
+  const out = waypoints.map(() => even)
+  for (let i = 0; i < segs; i += 1) {
+    out[i] = Math.max(0.1, round3((timelineLen * segDist[i]) / total))
+  }
+  return out
 }
 
 /** timeline length in seconds — the ruler / playback domain. Falls back to the
@@ -197,24 +331,26 @@ export type TrackPoint = {
 
 export function buildTrack(route: Route): TrackPoint[] {
   const points: TrackPoint[] = []
-  const origin = route.waypoints[0]
+  /* only waypoints with a position key draw a track */
+  const positioned = route.waypoints.filter(hasPosition)
+  const origin = positioned[0]
   if (!origin) return points
 
   const metersPerDegLat = (Math.PI * EARTH_RADIUS_M) / 180
   const originCosLat = Math.cos((origin.lat * Math.PI) / 180)
   let cumulative = 0
 
-  route.waypoints.forEach((w, index) => {
+  positioned.forEach((w, index) => {
     if (index > 0) {
-      const prev = route.waypoints[index - 1]
-      cumulative += haversineM(prev.lon, prev.lat, w.lon, w.lat)
+      const prev = positioned[index - 1]
+      cumulative += haversineM(prev.lon!, prev.lat!, w.lon!, w.lat!)
     }
     points.push({
-      lon: w.lon,
-      lat: w.lat,
-      height: w.height,
-      east: (w.lon - origin.lon) * metersPerDegLat * originCosLat,
-      north: (w.lat - origin.lat) * metersPerDegLat,
+      lon: w.lon!,
+      lat: w.lat!,
+      height: w.height!,
+      east: (w.lon! - origin.lon!) * metersPerDegLat * originCosLat,
+      north: (w.lat! - origin.lat!) * metersPerDegLat,
       cumulative,
     })
   })

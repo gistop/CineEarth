@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { timelineDuration, totalDuration } from '../features/route/pathMath'
+import type { InsertStrategy } from '../features/route/types'
 
 /** GES-style fixed fps presets */
 const FPS_OPTIONS = [24, 25, 30, 50, 60]
@@ -11,16 +12,19 @@ type LenUnit = 'sec' | 'frame'
 
 /**
  * Project settings column — the free strip at the right of the expanded
- * timeline's lane grid (level with the track rows): 长度 (秒/帧) · 帧率 · 尺寸.
- * Rendered inside .ce-tracks, so it hides with the tracks when collapsed.
+ * timeline's lane grid (level with the track rows): 长度 (秒/帧) · 插入 · 帧率 ·
+ * 尺寸 · 关键帧 (read-only waypoint count). Rendered inside .ce-tracks, so it
+ * hides with the tracks when collapsed.
  *
- * 长度 (route.timelineLen) and 帧率 (route.fps) are wired to the store; 尺寸 is
- * still a UI mock until the export pipeline grows its own settings.
+ * 长度 (route.timelineLen), 插入 (route.insertStrategy) and 帧率 (route.fps)
+ * are wired to the store; 尺寸 is still a UI mock until the export pipeline
+ * grows its own settings.
  */
 export default function TimelineSettings() {
   const route = useRoute((s) => s.route)
   const setFps = useRoute((s) => s.setFps)
   const setTimelineLen = useRoute((s) => s.setTimelineLen)
+  const setInsertStrategy = useRoute((s) => s.setInsertStrategy)
   const fitTimeline = useRoute((s) => s.fitTimeline)
   const unit = useUI((s) => s.tlUnit)
   const setTlUnit = useUI((s) => s.setTlUnit)
@@ -126,6 +130,23 @@ export default function TimelineSettings() {
       </div>
 
       <div className="ce-tl-set">
+        <span className="ce-tl-set-name">插入</span>
+        <div className="ce-tl-set-row">
+          <select
+            className="ce-tl-sel"
+            aria-label="插入策略"
+            title="地图上点击插入航点时段时长的分配方式 — 固定：每段固定时长；均分：时间轴长度等分给所有段，末端关键帧始终落在时间轴末端；距离：按航点间地理距离比例分配。切换只影响之后的插入，不改动现有段"
+            value={route.insertStrategy}
+            onChange={(e) => setInsertStrategy(e.target.value as InsertStrategy)}
+          >
+            <option value="fixed">固定</option>
+            <option value="even">均分</option>
+            <option value="distance">距离</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="ce-tl-set">
         <span className="ce-tl-set-name">帧率</span>
         <div className="ce-tl-set-row">
           <select
@@ -168,6 +189,17 @@ export default function TimelineSettings() {
             value={h}
             onChange={(e) => setH(num(e.target.value, h))}
           />
+        </div>
+      </div>
+
+      {/* waypoint count — the old bundled Camera track's only real payload,
+          now a read-only stat (keys are authored by clicking the map) */}
+      <div className="ce-tl-set">
+        <span className="ce-tl-set-name">关键帧</span>
+        <div className="ce-tl-set-row">
+          <span className="ce-tl-stat" title="航点（相机关键帧）数量 — 在地图上点击添加">
+            {route.waypoints.length}
+          </span>
         </div>
       </div>
     </div>

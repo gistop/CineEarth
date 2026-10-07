@@ -148,7 +148,9 @@ export default function RouteTopView({ route }: { route: Route }) {
             return waypointStyle(Number.isFinite(index) ? index : 0, feature.get('selected') === true)
           },
         }),
-        new VectorLayer({ source: headSource, style: headStyle }),
+        /* no layer-level style: every feature carries its own (headStyle is a
+           factory, not an OL StyleFunction — passing it here was a type lie) */
+        new VectorLayer({ source: headSource }),
       ],
       view: new View({ center: fromLonLat([7, 61]), zoom: 5 }),
       controls: [],
@@ -263,12 +265,48 @@ export default function RouteTopView({ route }: { route: Route }) {
     const observer = new ResizeObserver(() => map.updateSize())
     observer.observe(container)
 
-    /* sync extent to the main globe — pick the ground under the screen centre
-       and measure the near-field span. computeViewRectangle() would stretch a
-       tilted cinematic camera's frustum all the way to the horizon. */
+    /* sync extent — WITH waypoints fit their bounding envelope (the map's
+       job while editing is to show the route); with NONE, match the main
+       globe: pick the ground under the screen centre and measure the
+       near-field span. computeViewRectangle() would stretch a tilted
+       cinematic camera's frustum all the way to the horizon. */
     const fitToGlobe = (): boolean => {
       const size = map.getSize()
       if (!size || size[0] < 10 || size[1] < 10) return false
+
+      /* waypoint envelope (position keys only; pose-only keys have no spot) */
+      const pts = useRoute
+        .getState()
+        .route.waypoints.map((w) =>
+          w.lon != null && w.lat != null ? fromLonLat([w.lon, w.lat]) : null,
+        )
+        .filter((p): p is [number, number] => p !== null)
+      if (pts.length > 0) {
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const [x, y] of pts) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+        /* degenerate (single point / coincident keys) — pad a ~250 m box
+           so fit() has something to zoom to */
+        const PAD = 250
+        if (maxX - minX < 1e-6) {
+          minX -= PAD
+          maxX += PAD
+        }
+        if (maxY - minY < 1e-6) {
+          minY -= PAD
+          maxY += PAD
+        }
+        map.getView().fit([minX, minY, maxX, maxY], { padding: [12, 12, 12, 12], maxZoom: 17 })
+        return true
+      }
+
       const viewer = getViewer()
       if (!viewer) return true
 
@@ -366,6 +404,8 @@ export default function RouteTopView({ route }: { route: Route }) {
       source.addFeature(path)
     }
     route.waypoints.forEach((w, index) => {
+      /* pose-only waypoints (no position key) have nothing to plot */
+      if (w.lon == null || w.lat == null) return
       const f = new Feature(new Point(fromLonLat([w.lon, w.lat])))
       f.set('kind', 'waypoint')
       f.set('waypointId', w.id)
@@ -466,6 +506,9 @@ export default function RouteTopView({ route }: { route: Route }) {
     return () => cancelAnimationFrame(raf)
   }, [])
 
+  /* any position key? decides the sync button's fit target & tooltip */
+  const hasPositionKeys = route.waypoints.some((w) => w.lon != null)
+
   return (
     <figure className="ce-minimap">
       <figcaption>
@@ -487,8 +530,12 @@ export default function RouteTopView({ route }: { route: Route }) {
           </button>
           <button
             type="button"
-            title="Sync — match the main globe view"
-            aria-label="Sync minimap to main view"
+            title={
+              hasPositionKeys ? 'Sync — fit all waypoints' : 'Sync — match the main globe view'
+            }
+            aria-label={
+              hasPositionKeys ? 'Fit minimap to waypoints' : 'Sync minimap to main view'
+            }
             onClick={() => syncToGlobeRef.current?.()}
           >
             <TargetIcon size={12} />

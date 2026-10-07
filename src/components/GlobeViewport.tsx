@@ -62,7 +62,8 @@ export default function GlobeViewport() {
          provider and the imagery layer (credits are baked in at creation). */
       void bootstrapIonSettings()
 
-      /* globe taps: target pick mode wins, otherwise click-empty closes drawers */
+      /* globe taps: target pick mode wins, otherwise click-empty closes the
+         LEFT tools drawer (right route drawer keeps its own close methods) */
       const handler = new ScreenSpaceEventHandler(viewer.scene.canvas)
       handler.setInputAction((click: ScreenSpaceEventHandler.PositionedEvent) => {
         if (!viewer) return
@@ -86,8 +87,9 @@ export default function GlobeViewport() {
 
         const picked = defined(viewer.scene.pick(click.position))
         if (!picked) {
+          // left tools drawer only — the route drawer (right) closes solely via
+          // its × button / Esc / R so route editing survives globe interaction
           ui.toggleDrawer(false)
-          ui.toggleRightDrawer(false)
         }
       }, ScreenSpaceEventType.LEFT_CLICK)
 

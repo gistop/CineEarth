@@ -13,6 +13,7 @@ import {
   CornerType,
   Entity,
   PolylineGlowMaterialProperty,
+  PerspectiveFrustum,
   sampleTerrainMostDetailed,
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
@@ -26,6 +27,7 @@ import {
 } from './pathMath'
 import { evalReveal, useReveal } from './revealStore'
 import { useRoute } from './routeStore'
+import { hasPosition } from './types'
 import { useExport } from '../export/exportStore'
 
 const ACCENT = Color.fromCssColorString('#38618c')
@@ -63,7 +65,9 @@ export default function RouteSceneBridge() {
       )
     }
 
-    route.waypoints.forEach((w) => {
+    /* only waypoints with a position key get a globe marker — a pose-only
+       waypoint (angle channels alone) has nowhere to pin one */
+    route.waypoints.filter(hasPosition).forEach((w) => {
       /* selection-aware style: CallbackProperty re-reads the store each frame,
          so globe highlights stay in sync with top/side views without rebuilds */
       const isSelected = () => useRoute.getState().selectedWaypointId === w.id
@@ -199,9 +203,12 @@ export default function RouteSceneBridge() {
         orientation: {
           heading: (pose.heading * Math.PI) / 180,
           pitch: (pose.pitch * Math.PI) / 180,
-          roll: 0,
+          roll: (pose.roll * Math.PI) / 180,
         },
       })
+      /* fov channel — deg → radians on the perspective frustum */
+      const frustum = viewer.camera.frustum
+      if (frustum instanceof PerspectiveFrustum) frustum.fov = (pose.fov * Math.PI) / 180
     }
   }
 

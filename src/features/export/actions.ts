@@ -1,11 +1,11 @@
 // Export actions — glue between UI buttons, the viewer registry and the recorder.
 
-import { Cartesian3, Math as CesiumMath } from 'cesium'
+import { Cartesian3, Math as CesiumMath, PerspectiveFrustum } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
 import { samplePose, timelineDuration, timelineProgressToRoute } from '../route/pathMath'
 import { useRoute } from '../route/routeStore'
-import type { Pose } from '../route/types'
+import { hasPosition, type Pose } from '../route/types'
 import { useExport } from './exportStore'
 import { createStamp, downloadBlob, recordVideo, type RecordPath } from './recorder'
 
@@ -17,9 +17,12 @@ function applyPose(pose: Pose): void {
     orientation: {
       heading: CesiumMath.toRadians(pose.heading),
       pitch: CesiumMath.toRadians(pose.pitch),
-      roll: 0,
+      roll: CesiumMath.toRadians(pose.roll),
     },
   })
+  /* fov channel — deg → radians on the perspective frustum */
+  const frustum = viewer.camera.frustum
+  if (frustum instanceof PerspectiveFrustum) frustum.fov = CesiumMath.toRadians(pose.fov)
 }
 
 /** Screenshot: explicit render, then capture the canvas (UI overlays are DOM — never baked in). */
@@ -46,8 +49,10 @@ export async function renderRouteVideo(): Promise<void> {
   const { route } = useRoute.getState()
   // WYSIWYG: a locked camera exports a locked-camera video (growth still animates)
   const camLocked = useUI.getState().cameraLocked
-  if (route.waypoints.length < 2) {
-    useExport.getState().finish('航线至少需要 2 个航点')
+  /* exporting needs a flyable path: ≥2 positioned waypoints (pose-only
+     keys alone cannot drive the camera) */
+  if (route.waypoints.filter(hasPosition).length < 2) {
+    useExport.getState().finish('航线至少需要 2 个位置关键帧')
     return
   }
 

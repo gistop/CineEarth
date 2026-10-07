@@ -4,7 +4,7 @@
 import { createWaypointId, type Route, type Waypoint } from './types'
 
 function wp(lon: number, lat: number, height: number, heading: number, pitch: number, duration: number): Waypoint {
-  return { id: createWaypointId(), lon, lat, height, heading, pitch, duration }
+  return { id: createWaypointId(), lon, lat, height, heading, pitch, roll: 0, duration }
 }
 
 export function createDemoRoute(): Route {
@@ -25,6 +25,7 @@ export function createDemoRoute(): Route {
     loopMode: 'once',
     target: null,
     timelineLen: content,
+    insertStrategy: 'fixed',
     waypoints,
   }
 }

@@ -3,15 +3,47 @@ import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { useReveal } from '../features/route/revealStore'
 import {
+  angleDeltaDeg,
+  normalizeAngleDeg,
   samplePose,
   timelineDuration,
   timelineProgressToRoute,
   totalDuration,
   waypointFractions,
 } from '../features/route/pathMath'
-import { DEFAULT_WAYPOINT_DURATION } from '../features/route/types'
+import { DEFAULT_FOV, DEFAULT_WAYPOINT_DURATION, type InsertGroup, type Pose } from '../features/route/types'
+import { PerspectiveFrustum } from 'cesium'
+import { getViewer } from '../cesium/viewerRegistry'
 import { cameraChannelKeys, formatChannelValue, type ChannelId, type ChannelKey } from '../features/route/cameraChannels'
 import TimelineSettings from './TimelineSettings'
+
+/** live 3D camera as a route Pose (degrees, north-clockwise heading) — the
+ *  seed the insert-key buttons use when the route has no keys yet; null when
+ *  the globe isn't mounted. */
+function currentCameraPose(): Pose | null {
+  const cam = getViewer()?.camera
+  if (!cam) return null
+  const deg = 180 / Math.PI
+  const carto = cam.positionCartographic
+  return {
+    lon: carto.longitude * deg,
+    lat: carto.latitude * deg,
+    height: carto.height,
+    heading: normalizeAngleDeg(cam.heading * deg),
+    pitch: cam.pitch * deg,
+    /* Cesium's roll getter returns [0, 2π): a LEVEL camera reads as
+       2π-ε → 359.99°, not 0. Fold it into [-180, 180] (level = 0,
+       ±180 = the same upside-down pose) — roll keys interpolate LINEARLY
+       over the stored values, so a raw 359.99 next to a 0 key would spin
+       the horizon through a full turn between the two. */
+    roll: angleDeltaDeg(0, cam.roll * deg),
+    /* frustum.fov (radians) → deg; non-perspective fallback keeps the default */
+    fov:
+      cam.frustum instanceof PerspectiveFrustum
+        ? cam.frustum.fov * deg
+        : DEFAULT_FOV,
+  }
+}
 
 /**
  * Expanded multi-track editor (GES-style).
@@ -19,10 +51,11 @@ import TimelineSettings from './TimelineSettings'
  * - Keys are rubber-band selectable (drag on empty area) and selected keys
  *   drag horizontally in time: waypoint keys rewrite segment durations,
  *   growth keys move their t (single growth key keeps the y = % adjust).
- * Position/heading channels derive from waypoints; FOV is a placeholder.
+ * All camera channels (incl. FOV) derive from waypoints.
  */
 
-type TrackId = 'camera' | ChannelId | 'growth' | 'fov'
+
+type TrackId = ChannelId | 'growth'
 
 /** key ids: `wp:<index>` for waypoint-projected keys, `gr:<id>` for growth keys */
 const wpId = (i: number) => `wp:${i}`
@@ -357,6 +390,14 @@ export default function TimelineTracks() {
   const route = useRoute((s) => s.route)
   const progress = useRoute((s) => s.progress)
   const updateWaypoint = useRoute((s) => s.updateWaypoint)
+  const removeWaypoint = useRoute((s) => s.removeWaypoint)
+  const insertKeyframe = useRoute((s) => s.insertKeyframeAtPlayhead)
+  /* insert buttons always carry the live camera pose — WYSIWYG: the store
+     prefers the seed whenever the globe is mounted (any key count), falling
+     back to the route's interpolated value only without a viewer. Each row
+     targets its own channel group: lon/lat/height share the bundled position
+     group, the three angles are independent. */
+  const insertFromCamera = (group: InsertGroup) => insertKeyframe(group, currentCameraPose())
   const tlView = useUI((s) => s.tlView)
   const setTlView = useUI((s) => s.setTlView)
   const tlUnit = useUI((s) => s.tlUnit)
@@ -584,6 +625,42 @@ export default function TimelineTracks() {
     dragRef.current = null
   }
 
+  /* Delete/Backspace removes the selected keys: camera keys take their
+     whole waypoint down (the time chain is shared — position trio and the
+     angles ride the same waypoint), growth keys remove just their dot.
+     Skipped while typing in a form field. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (selected.size === 0) return
+      const el = document.activeElement
+      if (
+        el instanceof HTMLElement &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+      )
+        return
+      e.preventDefault()
+      /* resolve indices → ids BEFORE deleting (ids stay stable while the
+         array shrinks under multi-delete) */
+      const wpIds = new Set<string>()
+      selected.forEach((id) => {
+        if (id.startsWith('wp:')) {
+          const w = route.waypoints[Number(id.slice(3))]
+          if (w) wpIds.add(w.id)
+        } else if (id.startsWith('gr:')) {
+          removeRevealKey(id.slice(3))
+        }
+      })
+      wpIds.forEach(removeWaypoint)
+      setSelected(new Set())
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, route.waypoints, removeWaypoint, removeRevealKey])
+
   /** move all selected keys in time; wp keys commit as segment durations */
   const applyDrag = (d: DragState, cx: number, cy: number) => {
     /* px → SECONDS through the visible span (zoom-aware): clock seconds are
@@ -644,23 +721,6 @@ export default function TimelineTracks() {
           the lanes grid aligns to its measured edges via --ce-tl-axis-l/r. */}
       {/* lanes scroll vertically when the rows don't fit */}
       <div className="ce-lanes" ref={lanesRef}>
-      {show('camera') && (
-        <ChannelTrack
-          id="camera"
-          label="Camera"
-          value={`${route.waypoints.length} keys`}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={route.waypoints.map((_, i) => ({
-            /* content seconds — keys keep their ABSOLUTE times when 长度 changes */
-            left: pct((channels.lon[i]?.t ?? 0) * content),
-            title: `Waypoint ${i + 1}`,
-            keyId: wpId(i),
-          }))}
-        />
-      )}
-
       {show('lon') && (
         <ChannelTrack
           id="lon"
@@ -670,6 +730,7 @@ export default function TimelineTracks() {
           onToggle={toggleSolo}
           selected={selected}
           keys={keySpans(channels.lon, 'lon', content, pct)}
+          onInsert={() => insertFromCamera('position')}
         />
       )}
       {show('lat') && (
@@ -681,6 +742,7 @@ export default function TimelineTracks() {
           onToggle={toggleSolo}
           selected={selected}
           keys={keySpans(channels.lat, 'lat', content, pct)}
+          onInsert={() => insertFromCamera('position')}
         />
       )}
       {show('height') && (
@@ -692,23 +754,79 @@ export default function TimelineTracks() {
           onToggle={toggleSolo}
           selected={selected}
           keys={keySpans(channels.height, 'height', content, pct)}
+          onInsert={() => insertFromCamera('position')}
+        />
+      )}
+      {show('heading') && (
+        <ChannelTrack
+          id="heading"
+          label="相机平移"
+          value={pose ? formatChannelValue('heading', pose.heading) : undefined}
+          solo={solo}
+          onToggle={toggleSolo}
+          selected={selected}
+          keys={keySpans(channels.heading, 'heading', content, pct)}
+          onInsert={() => insertFromCamera('heading')}
+        />
+      )}
+      {show('pitch') && (
+        <ChannelTrack
+          id="pitch"
+          label="相机倾斜"
+          value={pose ? formatChannelValue('pitch', pose.pitch) : undefined}
+          solo={solo}
+          onToggle={toggleSolo}
+          selected={selected}
+          keys={keySpans(channels.pitch, 'pitch', content, pct)}
+          onInsert={() => insertFromCamera('pitch')}
+        />
+      )}
+      {show('roll') && (
+        <ChannelTrack
+          id="roll"
+          label="相机翻滚"
+          value={pose ? formatChannelValue('roll', pose.roll) : undefined}
+          solo={solo}
+          onToggle={toggleSolo}
+          selected={selected}
+          keys={keySpans(channels.roll, 'roll', content, pct)}
+          onInsert={() => insertFromCamera('roll')}
         />
       )}
       {show('fov') && (
-        <ChannelTrack id="fov" label="相机视野" value="60°" solo={solo} onToggle={toggleSolo} selected={selected} keys={[]} />
+        <ChannelTrack
+          id="fov"
+          label="相机视野"
+          value={pose ? formatChannelValue('fov', pose.fov) : undefined}
+          solo={solo}
+          onToggle={toggleSolo}
+          selected={selected}
+          keys={keySpans(channels.fov, 'fov', content, pct)}
+          onInsert={() => insertFromCamera('fov')}
+        />
       )}
 
       {/* growth line — dbl-click lane adds a key, dbl-click a key removes it.
           Selection & dragging are handled by the container (see onRootPointerDown). */}
       {show('growth') && (
         <div className="ce-track">
-          <SoloLabel
-            id="growth"
-            label="Growth"
-            value={growthLine ? 'on' : undefined}
-            solo={solo}
-            onToggle={toggleSolo}
-          />
+          <div className="ce-track-side">
+            <SoloLabel
+              id="growth"
+              label="Growth"
+              value={growthLine ? 'on' : undefined}
+              solo={solo}
+              onToggle={toggleSolo}
+            />
+            <InsertKeyBtn
+              label="Growth"
+              onInsert={() => {
+                /* a key already sits at the playhead → nothing to add */
+                if (revealKeys.some((k) => Math.abs(k.t - progress) < 0.005)) return
+                addRevealKey(progress)
+              }}
+            />
+          </div>
           <div
             className="ce-track-lane ce-reveal-lane"
             title="Growth % · dbl-click: add key · drag: time / % · dbl-click key: delete"
@@ -743,17 +861,6 @@ export default function TimelineTracks() {
         </div>
       )}
 
-      {show('heading') && (
-        <ChannelTrack
-          id="heading"
-          label="Heading"
-          value={pose ? formatChannelValue('heading', pose.heading) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.heading, 'heading', content, pct)}
-        />
-      )}
       </div>
 
       {/* project settings column — the free strip right of the lane grid
@@ -827,7 +934,33 @@ function SoloLabel({
   )
 }
 
-/** a simple channel row: solo label + lane of selectable keys */
+/** insert-keyframe button (GES-style attribute row). Renders as a hollow
+ *  keyframe diamond that fills on hover. Rows without a key action may
+ *  still omit onInsert (renders DISABLED). */
+function InsertKeyBtn({
+  label,
+  title,
+  onInsert,
+}: {
+  label: string
+  title?: string
+  onInsert?: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="ce-kf-add"
+      title={title ?? `在播放头处插入${label}关键帧`}
+      aria-label={`插入${label}关键帧`}
+      disabled={!onInsert}
+      onClick={onInsert}
+    >
+      <span className="ce-kf-dot" aria-hidden="true" />
+    </button>
+  )
+}
+
+/** a simple channel row: solo label + kf button + lane of selectable keys */
 function ChannelTrack({
   id,
   label,
@@ -836,6 +969,7 @@ function ChannelTrack({
   onToggle,
   selected,
   keys,
+  onInsert,
 }: {
   id: TrackId
   label: string
@@ -844,10 +978,18 @@ function ChannelTrack({
   onToggle: (id: TrackId) => void
   selected: Set<string>
   keys: { left: number; title: string; keyId: string }[]
+  onInsert?: () => void
 }) {
   return (
     <div className="ce-track">
-      <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />
+      <div className="ce-track-side">
+        <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />
+        <InsertKeyBtn
+          label={label}
+          title="在播放头处插入关键帧（航点键 · 相机通道同步落帧）"
+          onInsert={onInsert}
+        />
+      </div>
       <div className="ce-track-lane">
         {keys.map((k, i) => (
           <span

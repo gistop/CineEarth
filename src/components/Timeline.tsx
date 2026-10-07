@@ -51,7 +51,6 @@ export default function Timeline() {
   const setGrowthLine = useReveal((s) => s.setGrowthLine)
 
   const route = useRoute((s) => s.route)
-  const progress = useRoute((s) => s.progress)
   const setProgress = useRoute((s) => s.setProgress)
 
   const exportStatus = useExport((s) => s.status)

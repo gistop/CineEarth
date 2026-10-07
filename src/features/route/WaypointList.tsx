@@ -29,10 +29,14 @@ export default function WaypointList() {
             <span className="ce-shot-idx">{String(i + 1).padStart(2, '0')}</span>
             <span className="ce-wp-main">
               <span className="ce-row-name">
-                {fmtDeg(w.lat, 'N', 'S')} · {fmtDeg(w.lon, 'E', 'W')}
+                {w.lat != null && w.lon != null
+                  ? `${fmtDeg(w.lat, 'N', 'S')} · ${fmtDeg(w.lon, 'E', 'W')}`
+                  : '仅姿态关键帧'}
               </span>
               <span className="ce-wp-sub">
-                {Math.round(w.height)} m · {w.heading.toFixed(0)}° / {w.pitch.toFixed(0)}°
+                {w.height != null ? `${Math.round(w.height)} m` : '—'} ·{' '}
+                {w.heading != null ? `${w.heading.toFixed(0)}°` : '—'} /{' '}
+                {w.pitch != null ? `${w.pitch.toFixed(0)}°` : '—'}
               </span>
             </span>
             <span className="ce-row-val">{w.duration.toFixed(1)}s</span>

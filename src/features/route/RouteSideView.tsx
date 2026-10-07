@@ -136,16 +136,20 @@ export default function RouteSideView({ route }: { route: Route }) {
     return { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt }
   }, [route, view])
 
-  /* waypoint dot positions in svg space (x by along-track distance, y by height) */
+  /* waypoint dot positions in svg space (x by along-track distance, y by
+     height) — pose-only waypoints (no position key) have no dot */
   const dots = useMemo(() => {
     if (!geometry) return []
     const { sx, sy, distanceAt } = geometry
-    return route.waypoints.map((w, i) => ({
-      id: w.id,
-      height: w.height,
-      x: sx(distanceAt(fractionOfWaypoint(route, i))),
-      y: sy(w.height),
-    }))
+    return route.waypoints
+      .map((w, i) => ({ w, i }))
+      .filter(({ w }) => w.lon != null && w.lat != null && w.height != null)
+      .map(({ w, i }) => ({
+        id: w.id,
+        height: w.height!,
+        x: sx(distanceAt(fractionOfWaypoint(route, i))),
+        y: sy(w.height!),
+      }))
   }, [geometry, route])
 
   /* data changed (not mid-drag) — drop the panned viewport, auto-fit again.
