@@ -27,6 +27,13 @@ export const LockIcon = ({ size = 18, className }: P) => (
   </svg>
 )
 
+export const TagIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V4a2 2 0 0 1 2-2h8l8.6 8.6a2 2 0 0 1 0 2.8z" />
+    <circle cx="7.5" cy="7.5" r="1.5" />
+  </svg>
+)
+
 export const SlidersIcon = ({ size = 18, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <path d="M4 8h10M18 8h2M4 16h4M12 16h8" />

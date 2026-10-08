@@ -40,6 +40,9 @@ interface UIState {
    *  underlying times stay in seconds. */
   tlUnit: 'sec' | 'frame'
 
+  /** keyframe value tags at each key's bottom-right — per channel, default off */
+  tlKeyValues: Record<string, boolean>
+
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
   toggleRightDrawer: (open?: boolean) => void
@@ -54,6 +57,7 @@ interface UIState {
   setTlView: (v: { start: number; span: number }) => void
   resetTlView: () => void
   setTlUnit: (u: 'sec' | 'frame') => void
+  toggleTlKeyValues: (id: string) => void
 }
 
 export const useUI = create<UIState>((set) => ({
@@ -70,6 +74,7 @@ export const useUI = create<UIState>((set) => ({
   sunOpen: false,
   tlView: { start: 0, span: Infinity },
   tlUnit: 'sec',
+  tlKeyValues: {},
 
   toggleDrawer: (open) => set((s) => ({ drawerOpen: open ?? !s.drawerOpen })),
   setDrawerTab: (tab) => set({ drawerTab: tab, drawerOpen: true }),
@@ -87,4 +92,6 @@ export const useUI = create<UIState>((set) => ({
   setTlView: (v) => set({ tlView: v }),
   resetTlView: () => set({ tlView: { start: 0, span: Infinity } }),
   setTlUnit: (u) => set({ tlUnit: u }),
+  toggleTlKeyValues: (id) =>
+    set((s) => ({ tlKeyValues: { ...s.tlKeyValues, [id]: !s.tlKeyValues[id] } })),
 }))

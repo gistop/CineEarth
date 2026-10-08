@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { useUI } from '../store/ui'
+import { TagIcon } from './Icons'
 import { useRoute } from '../features/route/routeStore'
 import { useReveal } from '../features/route/revealStore'
 import {
@@ -11,7 +12,7 @@ import {
   totalDuration,
   waypointFractions,
 } from '../features/route/pathMath'
-import { DEFAULT_FOV, DEFAULT_WAYPOINT_DURATION, type InsertGroup, type Pose } from '../features/route/types'
+import { DEFAULT_FOV, DEFAULT_WAYPOINT_DURATION, type InsertGroup, type Pose, type Waypoint } from '../features/route/types'
 import { PerspectiveFrustum } from 'cesium'
 import { getViewer } from '../cesium/viewerRegistry'
 import { cameraChannelKeys, formatChannelValue, type ChannelId, type ChannelKey } from '../features/route/cameraChannels'
@@ -978,45 +979,158 @@ function ChannelTrack({
   solo: TrackId | null
   onToggle: (id: TrackId) => void
   selected: Set<string>
-  keys: { left: number; title: string; keyId: string }[]
+  keys: { left: number; title: string; keyId: string; tSec: number; chip: string; wp: number; raw: string }[]
   onInsert?: () => void
 }) {
+  /* playhead read — the whole grid re-renders on every progress tick already
+     (the parent subscribes), so this costs no extra renders */
+  const progress = useRoute((s) => s.progress)
+  const route = useRoute((s) => s.route)
+  const tlView = useUI((s) => s.tlView)
+  /* keyframe value tags — PER-CHANNEL toggle (default off): each row's
+     button controls only its own lane */
+  const vals = useUI((s) => !!s.tlKeyValues[id])
+  const toggleVals = useUI((s) => s.toggleTlKeyValues)
+  /* click a value tag → inline edit. Commit writes the channel field back to
+     the source waypoint — ChannelId names match Waypoint fields 1:1. */
+  const [edit, setEdit] = useState<{ wp: number; keyId: string; draft: string } | null>(null)
+  const updateWaypoint = useRoute((s) => s.updateWaypoint)
+  const commitEdit = () => {
+    if (!edit) return
+    const v = parseFloat(edit.draft)
+    const w = route.waypoints[edit.wp]
+    if (w && Number.isFinite(v)) {
+      updateWaypoint(w.id, { [id]: v } as Partial<Omit<Waypoint, 'id'>>)
+    }
+    setEdit(null)
+  }
+  const playT = progress * timelineDuration(route)
+  /* A key reads as LIVE while the playhead line VISUALLY touches it (≈4px of
+     time, converted through the zoom window). Scrubbing is continuous —
+     setProgress never snaps to frames — so a fixed half-frame tolerance would
+     make the highlight practically unreachable. */
+  const laneRef = useRef<HTMLDivElement>(null)
+  const [laneW, setLaneW] = useState(0)
+  useEffect(() => {
+    const el = laneRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setLaneW(e.contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const liveSpan = clampView(tlView, timelineDuration(route)).span
+  const liveTol = laneW > 0 ? (4 / laneW) * liveSpan : 0.5 / route.fps
+
+  /* Connect ADJACENT keys — the span the channel interpolates over (GES draws
+     exactly this line: 见 相机位置/经度 行的 ◆———◆). Before the first and
+     after the last key the channel HOLDS, so no line is drawn there. The span
+     is clamped (a zoomed-out pair could otherwise cover thousands of percent)
+     and inset a few px so the diamonds stay crisp; keys paint over the ends
+     because they come later in the DOM. */
+  const links: { left: number; width: number }[] = []
+  for (let i = 0; i < keys.length - 1; i += 1) {
+    const a = Math.max(-12, Math.min(112, keys[i].left))
+    const b = Math.max(-12, Math.min(112, keys[i + 1].left))
+    if (b - a > 0.4) links.push({ left: a, width: b - a })
+  }
+
   return (
     <div className="ce-track">
       <div className="ce-track-side">
         <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />
+        <button
+          type="button"
+          className={`ce-kf-vals${vals ? ' is-on' : ''}`}
+          title="显示/隐藏本通道关键帧右下角的值"
+          aria-label="切换本通道关键帧值显示"
+          aria-pressed={vals}
+          onClick={() => toggleVals(id)}
+        >
+          <TagIcon size={11} />
+        </button>
         <InsertKeyBtn
           label={label}
           title="在播放头处插入关键帧（航点键 · 相机通道同步落帧）"
           onInsert={onInsert}
         />
       </div>
-      <div className="ce-track-lane">
-        {keys.map((k, i) => (
+      <div className="ce-track-lane" ref={laneRef}>
+        {links.map((l, i) => (
           <span
-            key={i}
-            data-key={k.keyId}
-            className={`ce-key${selected.has(k.keyId) ? ' is-selected' : ''}`}
-            style={{ left: `${k.left}%` }}
-            title={k.title}
+            key={`l${i}`}
+            className="ce-key-link"
+            aria-hidden="true"
+            style={{ left: `calc(${l.left}% + 4px)`, width: `calc(${l.width}% - 8px)` }}
           />
+        ))}
+        {keys.map((k, i) => (
+          <Fragment key={i}>
+            <span
+              data-key={k.keyId}
+              className={`ce-key${selected.has(k.keyId) ? ' is-selected' : ''}${
+                Math.abs(k.tSec - playT) <= liveTol ? ' is-live' : ''
+              }`}
+              style={{ left: `${k.left}%` }}
+              title={k.title}
+            />
+            {vals &&
+              (edit?.keyId === k.keyId ? (
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className={`ce-key-val is-edit${k.left > 82 ? ' is-flip' : ''}`}
+                  style={{ left: `${k.left}%` }}
+                  value={edit.draft}
+                  autoFocus
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => setEdit({ ...edit, draft: e.target.value })}
+                  onBlur={commitEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitEdit()
+                    else if (e.key === 'Escape') setEdit(null)
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  aria-label={`编辑${label}关键帧值`}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className={`ce-key-val${k.left > 82 ? ' is-flip' : ''}`}
+                  style={{ left: `${k.left}%` }}
+                  title="点击修改该值"
+                  onClick={() => setEdit({ wp: k.wp, keyId: k.keyId, draft: k.raw })}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                >
+                  {k.chip}
+                </button>
+              ))}
+          </Fragment>
         ))}
       </div>
     </div>
   )
 }
 
-/** channel keys → lane spans (percent position + value tooltip + selection id) */
+/** channel keys → lane spans (percent position + absolute seconds + value
+ *  tooltip + selection id). tSec feeds the playhead-hit highlight and the
+ *  connectors between adjacent keys. */
 function keySpans(
   keys: ChannelKey[],
   id: ChannelId,
   duration: number,
   pct: (tSec: number) => number,
-): { left: number; title: string; keyId: string }[] {
+): { left: number; title: string; keyId: string; tSec: number; chip: string; wp: number; raw: string }[] {
   return keys.map((k) => ({
     left: pct(k.t * duration),
+    tSec: k.t * duration,
     title: `${formatChannelValue(id, k.value)} @ ${(k.t * duration).toFixed(1)}s · Waypoint ${k.waypoint + 1}`,
+    chip: formatChannelValue(id, k.value),
     keyId: wpId(k.waypoint),
+    /* source waypoint index + unformatted seed for the inline editor */
+    wp: k.waypoint,
+    raw: String(+k.value.toFixed(6)),
   }))
 }
 

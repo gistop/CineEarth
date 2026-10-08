@@ -22,6 +22,7 @@ import TileLayer from 'ol/layer/Tile.js'
 import VectorLayer from 'ol/layer/Vector.js'
 import OSM from 'ol/source/OSM.js'
 import VectorSource from 'ol/source/Vector.js'
+import XYZ from 'ol/source/XYZ.js'
 import Translate from 'ol/interaction/Translate.js'
 import DragPan from 'ol/interaction/DragPan.js'
 import DoubleClickZoom from 'ol/interaction/DoubleClickZoom.js'
@@ -32,7 +33,7 @@ import type { MapBrowserEvent } from 'ol'
 import { samplePath } from './pathMath'
 import { useRoute } from './routeStore'
 import { useUI } from '../../store/ui'
-import { MinusIcon, PlusIcon, TargetIcon, PinIcon } from '../../components/Icons'
+import { LayersIcon, MinusIcon, PlusIcon, TargetIcon, PinIcon } from '../../components/Icons'
 import type { Pose, Route } from './types'
 
 /* palette — mirrors tokens.css (canvas styles can't read CSS vars) */
@@ -80,6 +81,37 @@ const footprintStyle = new Style({
   stroke: new Stroke({ color: 'rgba(251, 251, 250, 0.9)', width: 1.5 }),
 })
 
+/* geometric-horizon clamp: the ground visible along a sky-facing ray ends
+   at the horizon (the camera's tangent circle on the ellipsoid). Solved in
+   unit-sphere space — scale by the radii, take the tangent point inside the
+   ray's vertical plane, scale back. Returns null only when the ray has no
+   azimuth to clamp along (aims through the zenith/nadir). */
+const horizonPoint = (
+  position: Cartesian3,
+  direction: Cartesian3,
+  radii: Cartesian3,
+): Cartesian3 | null => {
+  const p = new Cartesian3(position.x / radii.x, position.y / radii.y, position.z / radii.z)
+  const d = new Cartesian3(direction.x / radii.x, direction.y / radii.y, direction.z / radii.z)
+  /* vertical plane through the camera containing the ray */
+  const n = Cartesian3.cross(p, d, new Cartesian3())
+  if (Cartesian3.magnitude(n) < 1e-9) return null
+  const u = Cartesian3.normalize(p, new Cartesian3())
+  const v = Cartesian3.normalize(Cartesian3.cross(n, p, new Cartesian3()), new Cartesian3())
+  /* angular radius of the horizon as seen from the camera */
+  const alpha = Math.acos(Math.min(1, 1 / Cartesian3.magnitude(p)))
+  /* forward tangent lies on the side the ray leans to */
+  const t = Cartesian3.dot(d, v) >= 0 ? alpha : -alpha
+  const cos = Math.cos(t)
+  const sin = Math.sin(t)
+  const tangent = new Cartesian3(
+    cos * u.x + sin * v.x,
+    cos * u.y + sin * v.y,
+    cos * u.z + sin * v.z,
+  )
+  return new Cartesian3(tangent.x * radii.x, tangent.y * radii.y, tangent.z * radii.z)
+}
+
 /* original-position ghost ring shown while dragging a waypoint */
 const ghostStyle = new Style({
   image: new CircleStyle({
@@ -88,6 +120,16 @@ const ghostStyle = new Style({
     stroke: new Stroke({ color: 'rgba(56, 97, 140, 0.55)', width: 1.5, lineDash: [3, 3] }),
   }),
 })
+
+/* basemap choice — OSM ↔ keyless Esri World Imagery, kept across reloads */
+const SAT_PREF_KEY = 'ce-topview-basemap-sat'
+function readSavedSat(): boolean {
+  try {
+    return localStorage.getItem(SAT_PREF_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 export default function RouteTopView({ route }: { route: Route }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -98,6 +140,25 @@ export default function RouteTopView({ route }: { route: Route }) {
   const fovFeatureRef = useRef<Feature<Polygon> | null>(null)
   const draggingRef = useRef(false)
   const syncToGlobeRef = useRef<(() => void) | null>(null)
+  const osmLayerRef = useRef<TileLayer | null>(null)
+  const satLayerRef = useRef<TileLayer | null>(null)
+
+  /* satellite imagery toggle — the two base layers swap visibility, never
+     both on, never both off; the map itself (view/route) is untouched */
+  const [satellite, setSatellite] = useState(readSavedSat)
+  const toggleBasemap = () =>
+    setSatellite((s) => {
+      try {
+        localStorage.setItem(SAT_PREF_KEY, s ? '0' : '1')
+      } catch {
+        /* storage unavailable — session-only toggle */
+      }
+      return !s
+    })
+  useEffect(() => {
+    osmLayerRef.current?.setVisible(!satellite)
+    satLayerRef.current?.setVisible(satellite)
+  }, [satellite])
 
   /* add-mode toggle — click empty map appends waypoints only while ON.
      The OL click handler closes over a ref (its effect never re-runs);
@@ -135,10 +196,27 @@ export default function RouteTopView({ route }: { route: Route }) {
 
     const source = new VectorSource()
     const headSource = new VectorSource()
+    /* two stacked base layers — exactly one visible (satellite pref read at
+       creation so reloads never flash OSM tiles first) */
+    const savedSat = readSavedSat()
     const map = new Map({
       target: container,
       layers: [
-        new TileLayer({ source: new OSM(), className: 'ce-ol-basemap' }),
+        new TileLayer({
+          source: new OSM(),
+          className: 'ce-ol-basemap',
+          visible: !savedSat,
+        }),
+        new TileLayer({
+          /* Esri World Imagery — keyless public XYZ tiles, CORS-enabled */
+          visible: savedSat,
+          className: 'ce-ol-basemap-sat',
+          source: new XYZ({
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attributions: 'Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+            maxZoom: 19,
+          }),
+        }),
         new VectorLayer({
           source,
           style: (feature) => {
@@ -260,7 +338,10 @@ export default function RouteTopView({ route }: { route: Route }) {
     sourceRef.current = source
     headFeatureRef.current = head
     fovFeatureRef.current = footprint
-    headLayerRef.current = map.getLayers().item(2) as VectorLayer
+    /* base layers are 0/1; route vector 2; head vector 3 */
+    osmLayerRef.current = map.getLayers().item(0) as TileLayer
+    satLayerRef.current = map.getLayers().item(1) as TileLayer
+    headLayerRef.current = map.getLayers().item(3) as VectorLayer
 
     const observer = new ResizeObserver(() => map.updateSize())
     observer.observe(container)
@@ -365,6 +446,8 @@ export default function RouteTopView({ route }: { route: Route }) {
       headFeatureRef.current = null
       fovFeatureRef.current = null
       headLayerRef.current = null
+      osmLayerRef.current = null
+      satLayerRef.current = null
     }
   }, [])
 
@@ -456,50 +539,76 @@ export default function RouteTopView({ route }: { route: Route }) {
       const carto = cam.positionCartographic
       const x = CesiumMath.toDegrees(carto.longitude)
       const y = CesiumMath.toDegrees(carto.latitude)
-      if (Math.abs(x - lastX) > 1e-9 || Math.abs(y - lastY) > 1e-9) {
+      /* NaN guards: lastX/Y/heading START as NaN, and NaN > threshold is
+         always false — without the isFinite check the very first write
+         never fires and the marker stays stuck at its seed position */
+      if (
+        !Number.isFinite(lastX) ||
+        !Number.isFinite(lastY) ||
+        Math.abs(x - lastX) > 1e-9 ||
+        Math.abs(y - lastY) > 1e-9
+      ) {
         lastX = x
         lastY = y
         head.getGeometry()?.setCoordinates(fromLonLat([x, y]))
       }
-      if (Math.abs(cam.heading - lastHeading) > 0.002) {
+      if (!Number.isFinite(lastHeading) || Math.abs(cam.heading - lastHeading) > 0.002) {
         lastHeading = cam.heading
         head.setStyle(headStyle(cam.heading))
       }
 
-      /* footprint: the 4 canvas corner rays projected onto the ground
-         (pure ellipsoid pick — cheap enough to run every frame; the ES
-         version draws to the horizon, we simply hide when a corner
-         faces the sky). All writes are dirty-checked so a still camera
-         never triggers a redraw. */
+      /* footprint: march the canvas BORDER (8 samples per edge, corners
+         included), not just the 4 corners — the horizon is an arc, corners
+         alone would chop it into straight chords. Each sample ray, in order:
+           1. globe.pick — terrain-aware ground hit
+           2. pickEllipsoid — fallback while terrain tiles are loading
+           3. horizonPoint — sky-facing rays clamp to the geometric horizon
+              (Earth-Studio-style "draw to the horizon" instead of hiding)
+         Only a frame with NO ground at all hides the polygon. All writes
+         are dirty-checked so a still camera never triggers a redraw. */
       const c = viewer.canvas
       const w = c.clientWidth
       const h = c.clientHeight
+      const radii = viewer.scene.globe.ellipsoid.radii
       const ring: number[] = []
-      for (const [px, py] of [
-        [0, 0],
-        [w, 0],
-        [w, h],
-        [0, h],
-      ] as const) {
-        const hit = cam.pickEllipsoid(new Cartesian2(px, py), viewer.scene.globe.ellipsoid)
-        if (!hit) {
-          if (lastRing !== null) {
-            lastRing = null
-            fov.getGeometry()?.setCoordinates([EMPTY])
-          }
-          return
-        }
-        const hc = Cartographic.fromCartesian(hit)
+      let groundHits = 0
+      for (let i = 0; i < 32; i++) {
+        const e = i >> 3
+        const f = (i & 7) / 8
+        const px = e === 0 ? f * w : e === 1 ? w : e === 2 ? w - f * w : 0
+        const py = e === 0 ? 0 : e === 1 ? f * h : e === 2 ? h : h - f * h
+        const pt = new Cartesian2(px, py)
+        const ray = cam.getPickRay(pt)
+        /* hit = real ground (terrain if loaded, ellipsoid otherwise) */
+        const hit =
+          (ray ? viewer.scene.globe.pick(ray, viewer.scene) : undefined) ??
+          cam.pickEllipsoid(pt, viewer.scene.globe.ellipsoid)
+        if (hit) groundHits++
+        const point = hit ?? (ray ? horizonPoint(cam.position, ray.direction, radii) : null)
+        if (!point) continue
+        const hc = Cartographic.fromCartesian(point)
         const p = fromLonLat([CesiumMath.toDegrees(hc.longitude), CesiumMath.toDegrees(hc.latitude)])
         ring.push(p[0], p[1])
       }
-      if (lastRing === null || ring.some((v, i) => Math.abs(v - lastRing![i]) > 1e-9)) {
+      if (groundHits === 0) {
+        if (lastRing !== null) {
+          lastRing = null
+          fov.getGeometry()?.setCoordinates([EMPTY])
+        }
+        return
+      }
+      if (
+        lastRing === null ||
+        ring.length !== lastRing.length ||
+        ring.some((v, i) => Math.abs(v - lastRing![i]) > 1e-9)
+      ) {
         lastRing = ring
-        fov
-          .getGeometry()
-          ?.setCoordinates([
-            [ring.slice(0, 2), ring.slice(2, 4), ring.slice(4, 6), ring.slice(6, 8), ring.slice(0, 2)],
-          ])
+        fov.getGeometry()?.setCoordinates([
+          [
+            ...Array.from({ length: ring.length / 2 }, (_, k) => ring.slice(k * 2, k * 2 + 2)),
+            ring.slice(0, 2),
+          ],
+        ])
       }
     }
     raf = requestAnimationFrame(tick)
@@ -514,6 +623,20 @@ export default function RouteTopView({ route }: { route: Route }) {
       <figcaption>
         <span>Top view</span>
         <span className="ce-minimap-tools">
+          <button
+            type="button"
+            className={satellite ? 'is-on' : ''}
+            title={
+              satellite
+                ? 'Basemap: satellite imagery (Esri) — click for street map'
+                : 'Basemap: street map (OSM) — click for satellite imagery'
+            }
+            aria-label="Toggle minimap basemap"
+            aria-pressed={satellite}
+            onClick={toggleBasemap}
+          >
+            <LayersIcon size={12} />
+          </button>
           <button
             type="button"
             className={addMode ? 'is-on' : ''}
@@ -551,6 +674,9 @@ export default function RouteTopView({ route }: { route: Route }) {
       <div className="ce-olmap-wrap">
         <div ref={containerRef} className="ce-olmap" role="img" aria-label="Route top view map" />
         <span className="ce-olmap-north" aria-hidden="true">N</span>
+        <span className="ce-olmap-attr">
+          {satellite ? 'Esri · Maxar · Earthstar Geographics' : '© OpenStreetMap contributors'}
+        </span>
       </div>
     </figure>
   )

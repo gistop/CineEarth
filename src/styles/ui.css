@@ -868,6 +868,62 @@
   opacity: 0.3;
   cursor: default;
 }
+/* per-channel toggle: keyframe value tags at each key's bottom-right
+   (default off) — one per attribute row, left of the insert button */
+.ce-kf-vals {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ce-text-3);
+  cursor: pointer;
+}
+.ce-kf-vals:hover,
+.ce-kf-vals.is-on {
+  color: var(--ce-accent);
+  background: var(--ce-surface-2);
+}
+/* the value tag at a key's bottom-right; flips to the LEFT when the key
+   sits near the right clip edge so it never gets cut off. Clicking the tag
+   swaps it for an inline input; stopPropagation on pointer events keeps
+   key select / drag / dbl-click untouched. */
+.ce-key-val {
+  position: absolute;
+  bottom: 1px;
+  transform: translateX(5px);
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ce-text-2);
+  white-space: nowrap;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-shadow: 0 0 3px var(--ce-surface-1);
+}
+.ce-key-val:hover {
+  color: var(--ce-accent);
+}
+.ce-key-val.is-flip {
+  transform: translateX(calc(-100% - 5px));
+}
+/* inline editor that replaces the tag while editing */
+.ce-key-val.is-edit {
+  width: 10ch;
+  color: var(--ce-text-1);
+  text-shadow: none;
+  background: var(--ce-surface-1);
+  border: 1px solid var(--ce-accent);
+  border-radius: 3px;
+  cursor: text;
+  outline: none;
+}
 /* lanes clip horizontally: keys/curves outside the zoom window simply
    disappear past the edge instead of leaking over neighbouring rows.
    The clip edge sits --ce-lane-key-room OUTSIDE the box on both x sides, so a
@@ -905,6 +961,25 @@
 .ce-key.is-selected {
   background: var(--ce-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ce-accent) 45%, transparent);
+}
+/* the key the playhead sits on — GES fills it solid (no halo, so it stays
+   distinguishable from a selected key) */
+.ce-key.is-live {
+  background: var(--ce-accent);
+}
+
+/* connector between ADJACENT keys: the span this channel interpolates over
+   (GES-style). Painted before the keys in the DOM, so the diamonds cover the
+   ends, and pointer-events:none keeps marquee / drag / dbl-click on the lane
+   working. Hold regions (outside first→last key) get no line at all. */
+.ce-key-link {
+  position: absolute;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--ce-accent) 38%, transparent);
+  pointer-events: none;
 }
 
 /* rubber-band selection rectangle (GES-style marquee) */
@@ -1338,6 +1413,21 @@
 /* mute the OSM basemap into the ink-on-paper palette */
 .ce-ol-basemap {
   filter: grayscale(1) contrast(0.92) brightness(1.05);
+}
+/* satellite imagery — kept near-natural, just tamed to sit by the dark UI */
+.ce-ol-basemap-sat {
+  filter: saturate(0.85) brightness(0.92);
+}
+.ce-olmap-attr {
+  position: absolute;
+  bottom: 3px;
+  left: 6px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ce-text-3);
+  opacity: 0.8;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
 }
 .ce-olmap-north {
   position: absolute;
