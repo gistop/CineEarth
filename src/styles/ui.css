@@ -924,6 +924,145 @@
   cursor: text;
   outline: none;
 }
+/* in curve mode the tag hangs BELOW its key, not off its right edge */
+.ce-key-val.is-curve {
+  bottom: auto;
+  text-shadow: 0 0 3px var(--ce-surface-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * GES curve mode — soloing ONE attribute row turns that lane into a
+ * value-mapped curve: x = time, y = the attribute's value. The green chassis
+ * mirrors Earth Studio's single-track view (its hue is fixed on purpose: the
+ * line must not read as "selected" the way the accent blue does).
+ * ------------------------------------------------------------------------- */
+.ce-track.is-curve {
+  align-items: stretch;
+}
+.ce-track-lane.is-curve {
+  min-height: 150px;
+  cursor: crosshair;
+}
+.ce-curve-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ce-curve-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--ce-text-3) 22%, transparent);
+}
+.ce-curve-tick {
+  position: absolute;
+  left: 4px;
+  transform: translateY(-50%);
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  font-style: normal;
+  line-height: 1;
+  color: var(--ce-text-3);
+  text-shadow: 0 0 3px var(--ce-surface-2);
+}
+/* the sampled curve — non-scaling-stroke keeps it 1.5px at any zoom */
+.ce-curve-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.ce-curve-line {
+  fill: none;
+  stroke: #4c9a5a;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.ce-ease-line {
+  stroke: color-mix(in srgb, #4c9a5a 55%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+/* round keys in curve mode — draggable on BOTH axes */
+.ce-key.is-curve-key {
+  top: auto;
+  width: 9px;
+  height: 9px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border-color: #4c9a5a;
+  cursor: move;
+}
+.ce-key.is-curve-key:hover,
+.ce-key.is-curve-key.is-live {
+  background: #4c9a5a;
+}
+.ce-key.is-curve-key.is-selected {
+  background: #4c9a5a;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #4c9a5a 45%, transparent);
+}
+/* bezier control points (缓动手柄) */
+.ce-ease-h {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--ce-surface);
+  border: 1.5px solid #4c9a5a;
+  cursor: move;
+  z-index: 2;
+}
+.ce-ease-h:hover {
+  background: #4c9a5a;
+}
+/* 缓动 context menu — hangs off the clicked key */
+.ce-ease-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 138px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--ce-border);
+  border-radius: 6px;
+  background: var(--ce-surface-1);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+.ce-ease-head {
+  padding: 3px 8px 5px;
+  font-size: 10px;
+  color: var(--ce-text-3);
+  white-space: nowrap;
+}
+.ce-ease-item {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ce-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ce-ease-item:hover {
+  color: var(--ce-text-1);
+  background: var(--ce-surface-2);
+}
+.ce-ease-item.is-on {
+  color: #4c9a5a;
+}
+.ce-ease-item.is-quiet {
+  color: var(--ce-text-3);
+}
 /* lanes clip horizontally: keys/curves outside the zoom window simply
    disappear past the edge instead of leaking over neighbouring rows.
    The clip edge sits --ce-lane-key-room OUTSIDE the box on both x sides, so a

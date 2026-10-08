@@ -6,6 +6,8 @@ import {
   DEFAULT_WP_PITCH,
   DEFAULT_WAYPOINT_DURATION,
   hasPosition,
+  type EaseChannel,
+  type EaseSpec,
   type InsertStrategy,
   type LoopMode,
   type Pose,
@@ -108,6 +110,103 @@ const smoothstep = (local: number) => {
   return c * c * (3 - 2 * c)
 }
 
+/* ---------------------------------------------------------------------------
+ * per-key easing (GES 缓动)
+ * ------------------------------------------------------------------------- */
+
+/** identity control corners: cubic-bezier(1/3,1/3,2/3,2/3) IS a straight line,
+ *  so a side without a handle contributes no easing on its own。A key that
+ *  EXPLICITLY eases (线性/缓入/缓出) leaves its other side straight — that is
+ *  the AE semantics, keep it. */
+const IDENT_OUT = { x: 1 / 3, y: 1 / 3 }
+const IDENT_IN = { x: 2 / 3, y: 2 / 3 }
+
+/** GES auto corners: a key that carries NO ease data at all still has the
+ *  editor's default smooth (flat) tangent — control on the key's own value.
+ *  Falling back to the STRAIGHT corners there (1/3,1/3) injects the chord's
+ *  slope into the segment, and a handle dragged on the other side then fights
+ *  it: the curve folds into an extra peak GES never shows (峰-谷-上升). Same
+ *  comment stands for the seed of 左右缓动 in EASE_SEED. */
+const SMOOTH_OUT = { x: 0.42, y: 0 }
+const SMOOTH_IN = { x: 0.58, y: 1 }
+
+/** CSS-style cubic bezier — y at time fraction x (Newton, bisection fallback) */
+function cubicBezier(x1: number, y1: number, x2: number, y2: number, x: number): number {
+  if (x <= 0) return 0
+  if (x >= 1) return 1
+  const bx = (t: number) => {
+    const u = 1 - t
+    return 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t
+  }
+  const by = (t: number) => {
+    const u = 1 - t
+    return 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t
+  }
+  const dx = (t: number) => {
+    const u = 1 - t
+    return 3 * u * u * x1 + 6 * u * t * (x2 - x1) + 3 * t * t * (1 - x2)
+  }
+  let t = x
+  for (let i = 0; i < 8; i += 1) {
+    const d = bx(t) - x
+    if (Math.abs(d) < 1e-5) return by(t)
+    const g = dx(t)
+    if (Math.abs(g) < 1e-6) break
+    t -= d / g
+  }
+  /* degenerate / inverted handles — bisection always lands an answer */
+  let lo = 0
+  let hi = 1
+  for (let i = 0; i < 24; i += 1) {
+    t = (lo + hi) / 2
+    if (bx(t) < x) lo = t
+    else hi = t
+  }
+  return by(t)
+}
+
+/**
+ * Eased local parameter (0..1) for one segment, straight from the two keys'
+ * ease specs — the single source of truth for the interpolation curve (used
+ * by easeParam below AND by the timeline graph, which draws exactly this).
+ *   no ease data at either end → smoothstep (the legacy default: routes
+ *     authored before easing existed interpolate exactly as before)
+ *   hold on either end → 0: the segment holds its START value and steps at
+ *     its end (跳跃)
+ *   otherwise a cubic bezier fed by a's `out` handle and b's `in` handle;
+ *     a side without a handle falls back to the key's own default tangent —
+ *     straight for a key with an explicit spec (线性/缓入/缓出), GES-smooth
+ *     (flat) for a key that was never eased
+ * The returned value may leave 0..1: an eased key whose handle sits past the
+ * segment's own value bracket describes an OVERSHOOT, and both callers treat
+ * it as one.
+ */
+export function easeFraction(local: number, ea?: EaseSpec, eb?: EaseSpec): number {
+  if (ea?.mode === 'hold' || eb?.mode === 'hold') return 0
+  const ho = ea?.out
+  const hi = eb?.in
+  if (!ho && !hi) {
+    if (ea?.mode === 'linear' || eb?.mode === 'linear') return clamp(local, 0, 1)
+    return smoothstep(local)
+  }
+  /* a key with an explicit spec but no handle on that side stays straight;
+     a key with no spec at all is GES-smooth (flat tangent) */
+  const p1 = ho ?? (ea ? IDENT_OUT : SMOOTH_OUT)
+  const p2 = hi ?? (eb ? IDENT_IN : SMOOTH_IN)
+  /* x stays PAIRED WITH ITS OWN y — an out handle dragged past the partner's
+     x used to get its y moved onto the partner's corner (min/max sorting) and
+     bent the segment at the wrong time. Ordering only needs x1 ≤ x2 for the
+     solver below. */
+  const x1 = clamp(p1.x, 0, 1)
+  const x2 = Math.max(clamp(p2.x, 0, 1), x1)
+  return cubicBezier(x1, p1.y, x2, p2.y, clamp(local, 0, 1))
+}
+
+/** Waypoint-level wrapper — same math, ease specs read off the two keys */
+function easeParam(local: number, ch: EaseChannel, a?: Waypoint, b?: Waypoint): number {
+  return easeFraction(local, a?.ease?.[ch], b?.ease?.[ch])
+}
+
 type AngleChannel = 'heading' | 'pitch' | 'roll' | 'fov'
 
 /** an angle channel evaluated at an absolute chain time over its own key
@@ -121,8 +220,8 @@ function channelValueAt(
   channel: AngleChannel,
 ): number | null {
   const keys = waypoints
-    .map((w, i) => ({ v: w[channel] ?? w.implicitAngles?.[channel], t: times[i] }))
-    .filter((k): k is { v: number; t: number } => k.v != null)
+    .map((w, i) => ({ v: w[channel] ?? w.implicitAngles?.[channel], t: times[i], w }))
+    .filter((k): k is { v: number; t: number; w: Waypoint } => k.v != null)
   if (keys.length === 0) return null
   if (keys.length === 1 || time <= keys[0].t) return keys[0].v
   if (time >= keys[keys.length - 1].t) return keys[keys.length - 1].v
@@ -130,7 +229,7 @@ function channelValueAt(
   while (i < keys.length && keys[i].t < time) i += 1
   const a = keys[i - 1]
   const b = keys[i]
-  const eased = smoothstep((time - a.t) / Math.max(b.t - a.t, 1e-6))
+  const eased = easeParam((time - a.t) / Math.max(b.t - a.t, 1e-6), channel, a.w, b.w)
   const delta = channel === 'heading' ? angleDeltaDeg(a.v, b.v) : b.v - a.v
   return a.v + delta * eased
 }
@@ -182,13 +281,36 @@ export function samplePose(route: Route, progress: number): Pose | null {
     while (i < pos.length && pos[i].t < time) i += 1
     const b = pos[i - 1]
     const c = pos[i]
-    const eased = smoothstep((time - b.t) / Math.max(c.t - b.t, 1e-6))
+    const local = (time - b.t) / Math.max(c.t - b.t, 1e-6)
     const a = pos[i - 2] ?? b
     const d = pos[i + 1] ?? c
+    /* each position axis carries its OWN easing (GES keeps 经度/纬度/海拔 as
+       separate attribute keys even though they share the waypoint slot) */
     place = {
-      lon: catmullRom(a.w.lon!, b.w.lon!, c.w.lon!, d.w.lon!, eased),
-      lat: catmullRom(a.w.lat!, b.w.lat!, c.w.lat!, d.w.lat!, eased),
-      height: Math.max(0, catmullRom(a.w.height!, b.w.height!, c.w.height!, d.w.height!, eased)),
+      lon: catmullRom(
+        a.w.lon!,
+        b.w.lon!,
+        c.w.lon!,
+        d.w.lon!,
+        easeParam(local, 'lon', b.w, c.w),
+      ),
+      lat: catmullRom(
+        a.w.lat!,
+        b.w.lat!,
+        c.w.lat!,
+        d.w.lat!,
+        easeParam(local, 'lat', b.w, c.w),
+      ),
+      height: Math.max(
+        0,
+        catmullRom(
+          a.w.height!,
+          b.w.height!,
+          c.w.height!,
+          d.w.height!,
+          easeParam(local, 'height', b.w, c.w),
+        ),
+      ),
     }
   }
 

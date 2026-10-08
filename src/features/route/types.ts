@@ -4,6 +4,36 @@
 //   position group (lon/lat/height) — bundled, all-or-nothing
 //   heading / pitch / roll / fov — four independent channels
 
+/** per-key easing — GES 右键菜单: 线性 / 左右缓动 / 缓入 / 缓出 / 跳跃 */
+export type EaseMode = 'linear' | 'both' | 'in' | 'out' | 'hold'
+
+/** bezier control point normalized to ONE segment:
+ *  x = fraction of the segment DURATION, y = fraction of the value DELTA.
+ *  `out` lives on the segment's START key (drawn to its right), `in` on the
+ *  END key (drawn to its left) — CSS cubic-bezier semantics. */
+export type EaseHandle = { x: number; y: number }
+
+export type EaseSpec = {
+  mode: EaseMode
+  /** shapes the segment to the NEXT key */
+  out?: EaseHandle
+  /** shapes the segment from the PREVIOUS key */
+  in?: EaseHandle
+}
+
+/** channels that can carry their own easing (per attribute, GES-style) */
+export type EaseChannel = 'lon' | 'lat' | 'height' | 'heading' | 'pitch' | 'roll' | 'fov'
+
+/** seed control points per mode — handles only exist for the modes that draw
+ *  them: 左右缓动 both sides, 缓入 left only, 缓出 right only */
+export const EASE_SEED: Record<EaseMode, { in?: EaseHandle; out?: EaseHandle }> = {
+  linear: {},
+  both: { out: { x: 0.42, y: 0 }, in: { x: 0.58, y: 1 } },
+  in: { in: { x: 0.58, y: 1 } },
+  out: { out: { x: 0.42, y: 0 } },
+  hold: {},
+}
+
 export type Waypoint = {
   id: string
   /** degrees — present = the position channel group has a key here */
@@ -28,6 +58,8 @@ export type Waypoint = {
   implicitAngles?: { heading: number; pitch: number; roll: number; fov: number }
   /** seconds to fly to the NEXT waypoint (last one only matters in loop modes) */
   duration: number
+  /** per-CHANNEL easing (absent = the legacy smoothstep default) */
+  ease?: Partial<Record<EaseChannel, EaseSpec>>
 }
 
 export type LoopMode = 'once' | 'loop' | 'pingpong'

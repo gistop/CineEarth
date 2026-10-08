@@ -5,6 +5,7 @@ import { useRoute } from '../features/route/routeStore'
 import { useReveal } from '../features/route/revealStore'
 import {
   angleDeltaDeg,
+  easeFraction,
   normalizeAngleDeg,
   samplePose,
   timelineDuration,
@@ -12,10 +13,25 @@ import {
   totalDuration,
   waypointFractions,
 } from '../features/route/pathMath'
-import { DEFAULT_FOV, DEFAULT_WAYPOINT_DURATION, type InsertGroup, type Pose, type Waypoint } from '../features/route/types'
+import {
+  DEFAULT_FOV,
+  DEFAULT_WAYPOINT_DURATION,
+  EASE_SEED,
+  type EaseMode,
+  type EaseSpec,
+  type InsertGroup,
+  type Pose,
+  type Waypoint,
+} from '../features/route/types'
 import { PerspectiveFrustum } from 'cesium'
 import { getViewer } from '../cesium/viewerRegistry'
-import { cameraChannelKeys, formatChannelValue, type ChannelId, type ChannelKey } from '../features/route/cameraChannels'
+import {
+  cameraChannelKeys,
+  clampChannelValue,
+  formatChannelValue,
+  type ChannelId,
+  type ChannelKey,
+} from '../features/route/cameraChannels'
 import TimelineSettings from './TimelineSettings'
 
 /** live 3D camera as a route Pose (degrees, north-clockwise heading) — the
@@ -67,22 +83,100 @@ const MIN_VIEW = 0.2
 
 type Marquee = { x0: number; y0: number; x1: number; y1: number }
 
+/** one channel key projected for the lane (time span + value + easing) */
+type KeySpan = {
+  left: number
+  title: string
+  keyId: string
+  tSec: number
+  chip: string
+  wp: number
+  raw: string
+  /** unformatted value — curve-mode y position + drag baseline */
+  value: number
+  ease?: EaseSpec
+}
+
+/** value range the soloed channel's curve is drawn over */
+type CurveRange = { min: number; max: number }
+
+/** GES 右键菜单 — modes whose name carries 缓 draw handles */
+const EASE_ITEMS: { mode: EaseMode; label: string }[] = [
+  { mode: 'linear', label: '线性' },
+  { mode: 'both', label: '左右缓动' },
+  { mode: 'in', label: '缓入 · 左手柄' },
+  { mode: 'out', label: '缓出 · 右手柄' },
+  { mode: 'hold', label: '跳跃' },
+]
+
+/** Least time offset (as a fraction of the segment) a bezier control keeps
+ *  from its key. A control sitting exactly ON the key's time turns the
+ *  tangent vertical — the "尖锐" spike the GES auto/aligned modes never
+ *  produce — so the aligned pair always keeps this gap. */
+const EASE_X_MIN = 0.04
+
+/** the seven GES attribute rows, in display order */const CHANNEL_ROWS: { id: ChannelId; label: string; group: InsertGroup }[] = [
+  { id: 'lon', label: '相机经度', group: 'position' },
+  { id: 'lat', label: '相机纬度', group: 'position' },
+  { id: 'height', label: '相机海拔', group: 'position' },
+  { id: 'heading', label: '相机平移', group: 'heading' },
+  { id: 'pitch', label: '相机倾斜', group: 'pitch' },
+  { id: 'roll', label: '相机翻滚', group: 'roll' },
+  { id: 'fov', label: '相机视野', group: 'fov' },
+]
+
 type DragState = {
-  kind: 'wp' | 'gr'
+  kind: 'wp' | 'gr' | 'handle'
   startX: number
   startY: number
   laneW: number
+  /** lane origin/frame at drag start — px → time/value conversion needs both */
+  laneLeft: number
   /** CONTENT length (seconds) — wp/growth base fractions are fractions of it */
   total: number
   /** TIMELINE length (seconds) — the domain the px→time delta rides */
   timeline: number
-  /** visible span at drag start — px→time conversion depends on the zoom level */
+  /** visible window at drag start — px→time conversion depends on the zoom */
+  viewStart: number
   viewSpan: number
   /** waypoint time fractions at drag start (feedback-free snapshot) */
   baseFractions: number[]
   wpIds: string[]
   /** growth keys snapshot at drag start */
   growthBase: { id: string; t: number; value: number }[]
+  /** curve mode: vertical (value) drag of one channel's keys */
+  curve?: {
+    ch: ChannelId
+    vmin: number
+    vmax: number
+    laneTop: number
+    laneH: number
+    /** keyId → value at drag start */
+    baseVals: Record<string, number>
+  }
+  /** ease specs at drag start, keyed by waypoint id — a wp drag re-projects
+   *  every handle against this base (see the 手柄随关键点刚性 comment) */
+  easeBase?: Record<string, Partial<Record<ChannelId, EaseSpec>>>
+  /** ease-handle drag: the control point of segment a→b on one channel */
+  handle?: {
+    wp: number
+    ch: ChannelId
+    side: 'in' | 'out'
+    aT: number
+    bT: number
+    aV: number
+    bV: number
+    /** the lane's value window — px→value must unwrap the SAME axis the lane
+     *  drew with (the padded auto-fit), NOT the segment's own delta */
+    vmin: number
+    vmax: number
+    laneTop: number
+    laneH: number
+    /** the key's OTHER segment (缓入/缓出 partner). GES 自动缓动 keeps the
+     *  two controls collinear through the key, so dragging one mirrors the
+     *  other; absent at the chain's ends (no neighbour to mirror into) */
+    opp?: { aT: number; bT: number; aV: number; bV: number }
+  }
 }
 
 /** visible window of the expanded timeline (seconds, already clamped) */
@@ -427,6 +521,66 @@ export default function TimelineTracks() {
   const pose = samplePose(route, timelineProgressToRoute(route, progress))
   const sortedRevealKeys = [...revealKeys].sort((a, b) => a.t - b.t)
 
+  /* ----- GES solo curve editor ------------------------------------------
+     Solo on an ATTRIBUTE row turns that lane into a value-mapped curve: the
+     keys keep their time on x and take their value on y. */
+  const curveId: ChannelId | null = solo && solo !== 'growth' ? solo : null
+  const [dragRange, setDragRange] = useState<CurveRange | null>(null)
+  const [menu, setMenu] = useState<{ wp: number; ch: ChannelId; x: number; y: number } | null>(null)
+  const openKeyMenu = (wp: number, ch: ChannelId, x: number, y: number) => setMenu({ wp, ch, x, y })
+  const applyEase = (wp: number, ch: ChannelId, mode: EaseMode | null) => {
+    const w = route.waypoints[wp]
+    if (w) {
+      const cur = { ...(w.ease ?? {}) }
+      if (mode === null) delete cur[ch]
+      else cur[ch] = { mode, ...EASE_SEED[mode] }
+      updateWaypoint(w.id, { ease: cur })
+    }
+    setMenu(null)
+  }
+  /* auto-fit the value axis around this channel's keys AND ease handles,
+     padded 12%. Frozen while a drag runs (dragRange) — a live re-fit would
+     rescale the axis under the cursor and the key would run away from the
+     pointer. */
+  const curveRange: CurveRange | null = (() => {
+    if (!curveId) return null
+    const ks = channels[curveId]
+    if (ks.length === 0) return { min: 0, max: 1 }
+    let min = Number.POSITIVE_INFINITY
+    let max = Number.NEGATIVE_INFINITY
+    ks.forEach((k) => {
+      if (k.value < min) min = k.value
+      if (k.value > max) max = k.value
+    })
+    /* GES: ease handles ride FREE in value, so the axis fits around them
+       too — after the gesture the overshooting control comes back into
+       view (拖完后坐标轴自适应). The flown curve stays in the hull of
+       keys+handles, so covering the handles covers the sampled values. */
+    const see = (v: number) => {
+      if (Number.isFinite(v)) {
+        if (v < min) min = v
+        if (v > max) max = v
+      }
+    }
+    ks.forEach((k, i) => {
+      const e = k.ease
+      if (!e) return
+      const prv = ks[i - 1]
+      const nxt = ks[i + 1]
+      if (e.out && nxt) see(k.value + e.out.y * (nxt.value - k.value))
+      if (e.in && prv) see(prv.value + e.in.y * (k.value - prv.value))
+    })
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 }
+    if (max - min < 1e-9) {
+      const pad = Math.max(Math.abs(max) * 0.05, 1)
+      min -= pad
+      max += pad
+    }
+    const pad = (max - min) * 0.12
+    return { min: min - pad, max: max + pad }
+  })()
+  const range = dragRange ?? curveRange
+
   /* ----- rubber-band selection & key dragging (container-level) ----- */
   const rootRef = useRef<HTMLDivElement>(null)
   const marqueeStartRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
@@ -552,6 +706,71 @@ export default function TimelineTracks() {
 
     if (e.button !== 0) return
 
+    /* any click in the grid dismisses the ease menu (it stops its own) */
+    if (menu) setMenu(null)
+
+    /* ease handle (curve mode): drag the bezier control point of a segment */
+    const hEl = (e.target as HTMLElement).closest<HTMLElement>('.ce-ease-h[data-h]')
+    if (hEl) {
+      e.preventDefault()
+      const hLane = hEl.closest('.ce-track-lane') as HTMLElement | null
+      const hr = hLane?.getBoundingClientRect()
+      /* data-h = "wp序号:side" — the channel rides the separate data-ch
+         attribute (the key id itself is "wp:N"; embedding it would split
+         into three parts and poison wp with NaN) */
+      const [hWp, hSide] = (hEl.dataset.h as string).split(':')
+      const hd = hEl.dataset
+      const laneVmin = Number(hd.vmin ?? hLane?.dataset.vmin)
+      const laneVmax = Number(hd.vmax ?? hLane?.dataset.vmax)
+      /* freeze the value axis for this gesture: curveRange now refits around
+         HANDLE values too, so a live refit mid-drag would rescale the axis
+         under the cursor and the handle would run away from the pointer —
+         same reason key drags freeze. Cleared with the others on pointerup. */
+      if (Number.isFinite(laneVmin) && Number.isFinite(laneVmax)) {
+        setDragRange({ min: laneVmin, max: laneVmax })
+      }
+      dragRef.current = {
+        kind: 'handle',
+        startX: e.clientX,
+        startY: e.clientY,
+        laneW: hr?.width || 1,
+        laneLeft: hr?.left ?? 0,
+        total: content,
+        timeline: DURATION,
+        viewStart,
+        viewSpan,
+        baseFractions: [],
+        wpIds: [],
+        growthBase: [],
+        handle: {
+          wp: Number(hWp),
+          ch: hd.ch as ChannelId,
+          side: hSide === 'in' ? 'in' : 'out',
+          aT: Number(hd.at),
+          bT: Number(hd.bt),
+          aV: Number(hd.av),
+          bV: Number(hd.bv),
+          /* the axis the lane is drawn on (data-vmin/vmax are published by the
+             lane in curve mode); malformed values fall back to the segment */
+          vmin: Number.isFinite(laneVmin) ? laneVmin : Number(hd.av),
+          vmax: Number.isFinite(laneVmax) ? laneVmax : Number(hd.bv),
+          laneTop: hr?.top ?? 0,
+          laneH: hr?.height || 1,
+          opp:
+            hd.oat != null && hd.obt != null && hd.oav != null && hd.obv != null
+              ? {
+                  aT: Number(hd.oat),
+                  bT: Number(hd.obt),
+                  aV: Number(hd.oav),
+                  bV: Number(hd.obv),
+                }
+              : undefined,
+        },
+      }
+      root.setPointerCapture(e.pointerId)
+      return
+    }
+
     const keyEl = (e.target as HTMLElement).closest<HTMLElement>('.ce-key[data-key]')
     if (keyEl) {
       e.preventDefault()
@@ -568,19 +787,44 @@ export default function TimelineTracks() {
         setSelected(sel)
       }
       const lane = keyEl.closest('.ce-track-lane') as HTMLElement | null
+      const laneRect = lane?.getBoundingClientRect()
+      /* curve mode: the lane publishes its value window, and a key carrying
+         data-ch adds the vertical (value) axis to the drag */
+      const keyCh = keyEl.dataset.ch as ChannelId | undefined
+      const curve =
+        keyCh && lane?.dataset.vmin != null
+          ? {
+              ch: keyCh,
+              vmin: Number(lane.dataset.vmin),
+              vmax: Number(lane.dataset.vmax),
+              laneTop: laneRect?.top ?? 0,
+              laneH: laneRect?.height || 1,
+              baseVals: Object.fromEntries(
+                Array.from(root.querySelectorAll<HTMLElement>('.ce-key[data-ch]')).map((el) => [
+                  el.dataset.key as string,
+                  Number(el.dataset.val),
+                ]),
+              ) as Record<string, number>,
+            }
+          : undefined
+      if (curve) setDragRange({ min: curve.vmin, max: curve.vmax })
       dragRef.current = {
         kind: id.startsWith('wp:') ? 'wp' : 'gr',
         startX: e.clientX,
         startY: e.clientY,
-        laneW: (lane?.getBoundingClientRect().width) || 1,
+        laneW: laneRect?.width || 1,
+        laneLeft: laneRect?.left ?? 0,
         /* wp/growth base fractions are fractions of the CONTENT, while the
            px→time delta rides the TIMELINE view span */
         total: content,
         timeline: DURATION,
+        viewStart,
         viewSpan,
         baseFractions: waypointFractions(route),
         wpIds: route.waypoints.map((w) => w.id),
         growthBase: revealKeys.map((k) => ({ id: k.id, t: k.t, value: k.value })),
+        curve,
+        easeBase: Object.fromEntries(route.waypoints.map((w) => [w.id, w.ease ?? {}])),
       }
       root.setPointerCapture(e.pointerId)
       return
@@ -625,6 +869,8 @@ export default function TimelineTracks() {
       return
     }
     dragRef.current = null
+    /* value axis un-freezes: the next render re-fits around the new values */
+    setDragRange(null)
   }
 
   /* Delete/Backspace removes the selected keys: camera keys take their
@@ -671,16 +917,110 @@ export default function TimelineTracks() {
     const ds = ((cx - d.startX) / d.laneW) * d.viewSpan
     const sel = [...selected]
 
+    if (d.kind === 'handle' && d.handle) {
+      const h = d.handle
+      const tSec = d.viewStart + ((cx - d.laneLeft) / d.laneW) * d.viewSpan
+      /* px → (time, value) through the lane's OWN windows: x is the zoom
+         window as drawn, y is the padded value axis (unwrapping y against the
+         SEGMENT delta instead used to make the point lag the mouse by the
+         axis padding + the neighbour's scale) */
+      /* GES rides the control FREE in value: no clamp keeps the mirror pair
+         collinear through the key (a clamped partner was the fold at the
+         lane edge), and overshoot past the keys' bracket is legitimate
+         easing. The axis refits around the handle AFTER the drag
+         (curveRange sees handle values); dragRange froze it for this
+         gesture so the point tracks the cursor 1:1. */
+      const value = h.vmax - ((cy - h.laneTop) / h.laneH) * (h.vmax - h.vmin)
+      const tSpan = h.bT - h.aT
+      const vSpan = h.bV - h.aV
+      /* the control also rides inside its own segment in TIME (x beyond 0..1
+         would cross the neighbour key and fold the curve back) and keeps
+         EASE_X_MIN of time from its key so the tangent can never turn
+         vertical */
+      const rawX = (tSec - h.aT) / (Math.abs(tSpan) > 1e-9 ? tSpan : 1e-9)
+      const x =
+        h.side === 'out'
+          ? Math.min(1, Math.max(EASE_X_MIN, rawX))
+          : Math.min(1 - EASE_X_MIN, Math.max(0, rawX))
+      const y = (value - h.aV) / (Math.abs(vSpan) > 1e-9 ? vSpan : 1e-9)
+      const w = route.waypoints[h.wp]
+      if (w) {
+        const cur = { ...(w.ease ?? {}) }
+        const spec: EaseSpec = { mode: 'both', ...cur[h.ch] }
+        const next: EaseSpec = { ...spec, [h.side]: { x, y } }
+        /* ---- GES 自动缓动: ONE direction, TWO lengths ---------------------
+           The pair shares the dragged control's DIRECTION (so the line
+           through the key stays straight), but the partner is ROTATED, not
+           stretched: it keeps its own length (its own stored offset), so the
+           two sides may — and usually do — differ, and dragging one side
+           never resizes the other. That is GES/AE's aligned-handle rule; an
+           absolute mirror (equal offsets) forced both sides to match.
+           The offsets are compared in the PARTNER'S OWN segment fractions
+           (time fraction, value fraction): the only metric in which a long
+           or flat neighbour cannot inflate the control. An absolute slope
+           did exactly that (lever × oSpanT/tSpan ÷ oSpanV) and folded the
+           neighbour into the 谷-峰 from the screenshots.
+           The partner can never pass the NEIGHBOUR key horizontally: if the
+           rotated lever would, the whole lever is scaled down — a uniform
+           scale keeps it ON the shared line, so the tangent never kinks. */
+        if (spec.mode === 'both' && h.opp) {
+          const o = h.opp
+          const oSpanT = Math.abs(o.bT - o.aT) > 1e-9 ? o.bT - o.aT : 1e-9
+          const oSpanV = Math.abs(o.bV - o.aV) > 1e-9 ? o.bV - o.aV : 1e-9
+          /* signed graph offsets from the key, on the dragged side */
+          const dOffT = (h.side === 'out' ? x : x - 1) * tSpan
+          const dOffV = (h.side === 'out' ? y : y - 1) * vSpan
+          const partnerIn = h.side === 'out'
+          const base = partnerIn ? 1 : 0
+          /* the partner's OWN handle — its own length survives the gesture */
+          const stored = partnerIn ? spec.in : spec.out
+          const seed = partnerIn
+            ? (EASE_SEED.both.in ?? { x: 0.58, y: 1 })
+            : (EASE_SEED.both.out ?? { x: 0.42, y: 0 })
+          const ownX = Math.min(1, Math.max(0, stored?.x ?? seed.x))
+          const ownY = stored?.y ?? seed.y
+          const ownT = partnerIn ? ownX - 1 : ownX
+          const ownV = partnerIn ? ownY - 1 : ownY
+          const ownLen = Math.hypot(ownT, ownV)
+          /* the dragged direction, expressed in the partner's own fractions */
+          const dirT = dOffT / oSpanT
+          const dirV = dOffV / oSpanV
+          const dirLen = Math.hypot(dirT, dirV) || 1e-9
+          /* rotate to the opposite side at its own length, then fit the
+             partner inside its segment in TIME (never past the neighbour) */
+          const unitT = dirT / dirLen
+          const timeLen = ownLen * Math.abs(unitT)
+          const s = timeLen > 1e-9 ? Math.min(1, (1 - EASE_X_MIN) / timeLen) : 1
+          next[partnerIn ? 'in' : 'out'] = {
+            x: base - (s * ownLen * unitT),
+            y: base - (s * ownLen * (dirV / dirLen)),
+          }
+        }
+        cur[h.ch] = next
+        updateWaypoint(w.id, { ease: cur })
+      }
+      return
+    }
+
     if (d.kind === 'wp') {
       const times = d.baseFractions.map((t) => t * d.total)
+      const base = [...times]
       sel.forEach((id) => {
         if (!id.startsWith('wp:')) return
         const i = Number(id.slice(3))
-        if (i > 0) times[i] += ds // wp 0 anchors the route start
+        /* wp 0 anchors the route start; a key's target never passes the
+           TIMELINE end (settings 长度) — GES keys stop at the comp end too */
+        if (i > 0) times[i] = Math.min(d.timeline, times[i] + ds)
       })
       // keep ordering with 0.1s minimum segment length
       for (let i = 1; i < times.length; i += 1) times[i] = Math.max(times[i], times[i - 1] + 0.1)
-      for (let i = times.length - 2; i >= 0; i -= 1) times[i] = Math.min(times[i], times[i + 1] - 0.1)
+      /* walk back left keeping spacing, AND re-pin whatever the push-chain
+         leaked past 长度 — capped at max(长度, 拖动前位置) so keys kept out
+         of range by a deliberate 长度 shrink never get yanked back in */
+      for (let i = times.length - 1; i >= 1; i -= 1) {
+        times[i] = Math.min(times[i], Math.max(d.timeline, base[i]))
+        times[i - 1] = Math.min(times[i - 1], times[i] - 0.1)
+      }
       route.waypoints.forEach((w, i) => {
         if (i >= times.length - 1) return
         const dur = Math.round((times[i + 1] - times[i]) * 1000) / 1000
@@ -688,6 +1028,115 @@ export default function TimelineTracks() {
           updateWaypoint(d.wpIds[i], { duration: dur })
         }
       })
+      /* curve mode: the same gesture also rides the VALUE axis. Horizontal
+         time stays shared per waypoint (经度/纬度/海拔 ride one slot), the
+         vertical write touches only this channel. */
+      const cv = d.curve
+      const dv = cv ? -((cy - d.startY) / cv.laneH) * (cv.vmax - cv.vmin) : 0
+      if (cv) {
+        sel.forEach((id) => {
+          if (!id.startsWith('wp:')) return
+          const base = cv.baseVals[id]
+          if (base == null) return
+          const w = route.waypoints[Number(id.slice(3))]
+          if (!w) return
+          updateWaypoint(w.id, {
+            [cv.ch]: clampChannelValue(cv.ch, base + dv),
+          } as Partial<Omit<Waypoint, 'id'>>)
+        })
+      }
+      /* ---- ease handles ride in GRAPH units (GES/AE) --------------------
+         A handle is STORED normalized to its own segment, so moving a key
+         re-maps every handle living in the segments around it: the pair
+         through a key folds, and only the next handle drag rewrites it
+         straight (图1 折 → 动一下手柄 → 图2 直). Re-project every handle from
+         its drag-start spec, old span → new span. Collinearity is a relation
+         between the two offsets, so keeping BOTH offsets keeps the line
+         through the key straight, and the handle visibly rides its key. */
+      const easeBase = d.easeBase
+      if (easeBase) {
+        const sameHandle = (
+          a?: { x: number; y: number },
+          b?: { x: number; y: number },
+        ) =>
+          a === b ||
+          (!!a && !!b && Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6)
+        /** channel value at a waypoint: the drag-start value for the soloed
+         *  channel (its live value is already being rewritten), the current
+         *  one for every other channel (they do not move in this gesture) */
+        const keyVal = (wi: number, c: ChannelId, after: boolean): number | null => {
+          const w = route.waypoints[wi]
+          if (!w) return null
+          const raw =
+            c === cv?.ch
+              ? cv.baseVals[w.id] ?? null
+              : ((w[c] as number | undefined) ?? null)
+          if (raw == null) return null
+          if (!after || c !== cv?.ch) return raw
+          return sel.includes(wpId(wi)) ? clampChannelValue(c, raw + dv) : raw
+        }
+        Object.keys(channels).forEach((cRaw) => {
+          const c = cRaw as ChannelId
+          const kidx = channels[c].map((k) => k.waypoint)
+          kidx.forEach((wi, p) => {
+            const w = route.waypoints[wi]
+            const from = easeBase[w?.id ?? '']?.[c]
+            if (!w || !from) return
+            const prev = p > 0 ? kidx[p - 1] : undefined
+            const nxt = p < kidx.length - 1 ? kidx[p + 1] : undefined
+            /** x,y are SEGMENT fractions — y sits on the side's base
+             *  (0 = segment start / 出, 1 = segment end / 入), so only the
+             *  offset from that base is a lever.
+             *  moved key (its own handle): the lever is RIGID — both
+             *    fractions rescaled, so the handle rides the key unchanged;
+             *  neighbour handle (the FAR end moved): GES keeps its ANGLE and
+             *    its x fraction, letting its length follow the segment — the
+             *    direction never tilts (that is what 图3/4 show), and the
+             *    pair through its key stays straight because a length change
+             *    along the same line cannot bend it. */
+            const reproject = (
+              h: { x: number; y: number },
+              a: number,
+              b: number,
+              baseY: 0 | 1,
+              keepAngle: boolean,
+            ) => {
+              const oT = base[b] - base[a]
+              const nT = times[b] - times[a]
+              const oA = keyVal(a, c, false)
+              const oB = keyVal(b, c, false)
+              const nA = keyVal(a, c, true)
+              const nB = keyVal(b, c, true)
+              const oV = oA != null && oB != null ? oB - oA : 0
+              const nV = nA != null && nB != null ? nB - nA : 0
+              const off = h.y - baseY
+              const scaled =
+                Math.abs(nV) > 1e-9 && Math.abs(oT) > 1e-9
+                  ? keepAngle
+                    ? (off * oV * nT) / (oT * nV)
+                    : off * (oV / nV)
+                  : off
+              return {
+                x: keepAngle || Math.abs(nT) < 1e-9 ? h.x : h.x * (oT / nT),
+                y: baseY + scaled,
+              }
+            }
+            const spec: EaseSpec = { ...from }
+            const moved = sel.includes(wpId(wi))
+            if (from.out && nxt != null) spec.out = reproject(from.out, wi, nxt, 0, !moved)
+            if (from.in && prev != null) spec.in = reproject(from.in, prev, wi, 1, !moved)
+            const cur = w.ease?.[c]
+            if (
+              cur?.mode === spec.mode &&
+              sameHandle(cur?.out, spec.out) &&
+              sameHandle(cur?.in, spec.in)
+            ) {
+              return
+            }
+            updateWaypoint(w.id, { ease: { ...(w.ease ?? {}), [c]: spec } })
+          })
+        })
+      }
       return
     }
 
@@ -718,94 +1167,32 @@ export default function TimelineTracks() {
       onPointerUp={onRootPointerUp}
       onPointerCancel={onRootPointerUp}
       onAuxClick={(e) => e.preventDefault()}
+      /* the ease menu is the only context menu; keys handle their own and
+         stop propagation, everything else just suppresses the browser one */
+      onContextMenu={(e) => e.preventDefault()}
     >
       {/* NO ruler row here — the one ruler lives in the transport bar above;
           the lanes grid aligns to its measured edges via --ce-tl-axis-l/r. */}
       {/* lanes scroll vertically when the rows don't fit */}
       <div className="ce-lanes" ref={lanesRef}>
-      {show('lon') && (
-        <ChannelTrack
-          id="lon"
-          label="相机经度"
-          value={pose ? formatChannelValue('lon', pose.lon) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.lon, 'lon', content, pct)}
-          onInsert={() => insertFromCamera('position')}
-        />
-      )}
-      {show('lat') && (
-        <ChannelTrack
-          id="lat"
-          label="相机纬度"
-          value={pose ? formatChannelValue('lat', pose.lat) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.lat, 'lat', content, pct)}
-          onInsert={() => insertFromCamera('position')}
-        />
-      )}
-      {show('height') && (
-        <ChannelTrack
-          id="height"
-          label="相机海拔"
-          value={pose ? formatChannelValue('height', pose.height) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.height, 'height', content, pct)}
-          onInsert={() => insertFromCamera('position')}
-        />
-      )}
-      {show('heading') && (
-        <ChannelTrack
-          id="heading"
-          label="相机平移"
-          value={pose ? formatChannelValue('heading', pose.heading) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.heading, 'heading', content, pct)}
-          onInsert={() => insertFromCamera('heading')}
-        />
-      )}
-      {show('pitch') && (
-        <ChannelTrack
-          id="pitch"
-          label="相机倾斜"
-          value={pose ? formatChannelValue('pitch', pose.pitch) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.pitch, 'pitch', content, pct)}
-          onInsert={() => insertFromCamera('pitch')}
-        />
-      )}
-      {show('roll') && (
-        <ChannelTrack
-          id="roll"
-          label="相机翻滚"
-          value={pose ? formatChannelValue('roll', pose.roll) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.roll, 'roll', content, pct)}
-          onInsert={() => insertFromCamera('roll')}
-        />
-      )}
-      {show('fov') && (
-        <ChannelTrack
-          id="fov"
-          label="相机视野"
-          value={pose ? formatChannelValue('fov', pose.fov) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels.fov, 'fov', content, pct)}
-          onInsert={() => insertFromCamera('fov')}
-        />
+      {CHANNEL_ROWS.map(
+        (row) =>
+          show(row.id) && (
+            <ChannelTrack
+              key={row.id}
+              id={row.id}
+              label={row.label}
+              value={pose ? formatChannelValue(row.id, pose[row.id]) : undefined}
+              solo={solo}
+              onToggle={toggleSolo}
+              selected={selected}
+              keys={keySpans(channels[row.id], row.id, content, pct)}
+              onInsert={() => insertFromCamera(row.group)}
+              curve={curveId === row.id}
+              range={range}
+              onKeyMenu={openKeyMenu}
+            />
+          ),
       )}
 
       {/* growth line — dbl-click lane adds a key, dbl-click a key removes it.
@@ -905,6 +1292,40 @@ export default function TimelineTracks() {
           }}
         />
       )}
+
+      {/* keyframe easing menu — rendered at the ROOT (the lane's clip-path
+          would eat a fixed child) and positioned at the click point */}
+      {menu && (
+        <div
+          className="ce-ease-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="ce-ease-head">
+            {(curveId ? CHANNEL_ROWS.find((r) => r.id === curveId)?.label : '关键帧') ?? ''} 缓动
+          </div>
+          {EASE_ITEMS.map((it) => (
+            <button
+              key={it.mode}
+              type="button"
+              className={`ce-ease-item${
+                route.waypoints[menu.wp]?.ease?.[menu.ch]?.mode === it.mode ? ' is-on' : ''
+              }`}
+              onClick={() => applyEase(menu.wp, menu.ch, it.mode)}
+            >
+              {it.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="ce-ease-item is-quiet"
+            onClick={() => applyEase(menu.wp, menu.ch, null)}
+          >
+            清除缓动
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -972,6 +1393,9 @@ function ChannelTrack({
   selected,
   keys,
   onInsert,
+  curve,
+  range,
+  onKeyMenu,
 }: {
   id: TrackId
   label: string
@@ -979,8 +1403,15 @@ function ChannelTrack({
   solo: TrackId | null
   onToggle: (id: TrackId) => void
   selected: Set<string>
-  keys: { left: number; title: string; keyId: string; tSec: number; chip: string; wp: number; raw: string }[]
+  keys: KeySpan[]
   onInsert?: () => void
+  /** this row is the soloed attribute → GES value-mapped curve editor */
+  curve?: boolean
+  /** value window for the curve (frozen while a drag runs) */
+  range?: CurveRange | null
+  /** right-click a key → 缓动 menu (owned by the parent, which can escape
+   *  the lane's clip-path) */
+  onKeyMenu?: (wp: number, ch: ChannelId, x: number, y: number) => void
 }) {
   /* playhead read — the whole grid re-renders on every progress tick already
      (the parent subscribes), so this costs no extra renders */
@@ -1034,8 +1465,186 @@ function ChannelTrack({
     if (b - a > 0.4) links.push({ left: a, width: b - a })
   }
 
+  /* ----- GES curve mode: solo on one attribute maps VALUE to y ------------- */
+  const DURATION = timelineDuration(route)
+  const { start: viewStart, span: viewSpan } = clampView(tlView, DURATION)
+  const ch = id as ChannelId
+  const showCurve = curve === true && range != null
+  /** lane percent for an absolute second (through the zoom window) */
+  const leftPct = (tSec: number) => ((tSec - viewStart) / viewSpan) * 100
+  /** lane percent top-down for a channel value */
+  const yPct = (v: number) =>
+    range ? 100 - ((v - range.min) / Math.max(range.max - range.min, 1e-9)) * 100 : 50
+  /* The drawn curve is the ATTRIBUTE's own interpolation curve: per segment
+     a → a + (b − a)·easeFraction(local) — literally what the graph handles
+     describe, and what GES's graph editor shows (hold=step shows up too).
+     It used to be re-sampled through samplePose; for the position group that
+     runs a Catmull-Rom over the keys, and there an overshooting handle sends
+     the EASED PARAMETER past 1 — the spline gets evaluated beyond its own
+     segment and the drawing folds into an extra 谷-峰 the handles never
+     describe. Heading/pitch are the exception: with a target the flight
+     re-aims them every frame, so those keep the flown sample. */
+  let curvePts = ''
+  if (showCurve) {
+    const N = 160
+    const aimed = route.target != null && (ch === 'heading' || ch === 'pitch')
+    const pts: string[] = []
+    for (let i = 0; i <= N; i += 1) {
+      const tSec = viewStart + (i / N) * viewSpan
+      let v: number | null
+      if (aimed) {
+        v = samplePose(route, timelineProgressToRoute(route, tSec / DURATION))?.[ch] ?? null
+      } else if (keys.length === 0) {
+        v = null
+      } else if (tSec <= keys[0].tSec) {
+        v = keys[0].value
+      } else if (tSec >= keys[keys.length - 1].tSec) {
+        v = keys[keys.length - 1].value
+      } else {
+        let j = 1
+        while (j < keys.length && keys[j].tSec < tSec) j += 1
+        const a = keys[j - 1]
+        const b = keys[j]
+        const local = (tSec - a.tSec) / Math.max(b.tSec - a.tSec, 1e-9)
+        const u = easeFraction(local, a.ease, b.ease)
+        const delta = ch === 'heading' ? angleDeltaDeg(a.value, b.value) : b.value - a.value
+        v = a.value + delta * u
+      }
+      if (v == null) continue
+      pts.push(`${leftPct(tSec).toFixed(2)},${yPct(v).toFixed(2)}`)
+    }
+    curvePts = pts.join(' ')
+  }
+  const gridTicks =
+    showCurve && range
+      ? [0, 0.25, 0.5, 0.75, 1].map((f) => ({
+          top: f * 100,
+          value: range.max - (range.max - range.min) * f,
+        }))
+      : []
+  /* easing handles: 缓入 draws LEFT of the key (prev→key), 缓出 RIGHT
+     (key→next), 左右缓动 both, 线性/跳跃 none */
+  const handles: {
+    id: string
+    left: number
+    top: number
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    at: number
+    bt: number
+    av: number
+    bv: number
+    /** the key's OTHER segment bounds — the mirror source for GES 自动缓动
+     *  (absent at a chain end: there is no neighbour to mirror into) */
+    oat?: number
+    obt?: number
+    oav?: number
+    obv?: number
+  }[] = []
+  if (showCurve) {
+    keys.forEach((k, i) => {
+      const mode = k.ease?.mode
+      if (!mode || mode === 'linear' || mode === 'hold') return
+      const nxt = keys[i + 1]
+      const prv = keys[i - 1]
+      if ((mode === 'both' || mode === 'out') && nxt && k.ease?.out) {
+        const hp = k.ease.out
+        const hx = leftPct(k.tSec + hp.x * (nxt.tSec - k.tSec))
+        const hy = yPct(k.value + hp.y * (nxt.value - k.value))
+        handles.push({
+          id: `${k.wp}:out`,
+          left: hx,
+          top: hy,
+          x1: k.left,
+          y1: yPct(k.value),
+          x2: hx,
+          y2: hy,
+          at: k.tSec,
+          bt: nxt.tSec,
+          av: k.value,
+          bv: nxt.value,
+          /* the partner is the 缓入 handle, normalized from prv → k (so the
+             bounds MUST read prv → k, in that order) */
+          oat: prv?.tSec,
+          obt: prv ? k.tSec : undefined,
+          oav: prv?.value,
+          obv: prv ? k.value : undefined,
+        })
+      }
+      if ((mode === 'both' || mode === 'in') && prv && k.ease?.in) {
+        const hp = k.ease.in
+        const hx = leftPct(prv.tSec + hp.x * (k.tSec - prv.tSec))
+        const hy = yPct(prv.value + hp.y * (k.value - prv.value))
+        handles.push({
+          id: `${k.wp}:in`,
+          left: hx,
+          top: hy,
+          x1: k.left,
+          y1: yPct(k.value),
+          x2: hx,
+          y2: hy,
+          at: prv.tSec,
+          bt: k.tSec,
+          av: prv.value,
+          bv: k.value,
+          oat: nxt ? k.tSec : undefined,
+          obt: nxt?.tSec,
+          oav: nxt ? k.value : undefined,
+          obv: nxt?.value,
+        })
+      }
+    })
+  }
+
+  /** the value tag under a key — click swaps it for the inline editor. In
+   *  curve mode it hangs BELOW the key instead of off its right edge. */
+  const valueTag = (k: KeySpan, curveMode: boolean) => {
+    if (!vals) return null
+    const pos = curveMode
+      ? { left: `${k.left}%`, top: `calc(${yPct(k.value)}% + 7px)` }
+      : { left: `${k.left}%` }
+    const flip = curveMode ? '' : k.left > 82 ? ' is-flip' : ''
+    if (edit?.keyId === k.keyId) {
+      return (
+        <input
+          type="text"
+          inputMode="decimal"
+          className={`ce-key-val is-edit${flip}${curveMode ? ' is-curve' : ''}`}
+          style={pos}
+          value={edit.draft}
+          autoFocus
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => setEdit({ ...edit, draft: e.target.value })}
+          onBlur={commitEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitEdit()
+            else if (e.key === 'Escape') setEdit(null)
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          aria-label={`编辑${label}关键帧值`}
+        />
+      )
+    }
+    return (
+      <button
+        type="button"
+        className={`ce-key-val${flip}${curveMode ? ' is-curve' : ''}`}
+        style={pos}
+        title="点击修改该值"
+        onClick={() => setEdit({ wp: k.wp, keyId: k.keyId, draft: k.raw })}
+        onPointerDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        {k.chip}
+      </button>
+    )
+  }
+
   return (
-    <div className="ce-track">
+    <div className={`ce-track${showCurve ? ' is-curve' : ''}`}>
       <div className="ce-track-side">
         <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />
         <button
@@ -1054,60 +1663,120 @@ function ChannelTrack({
           onInsert={onInsert}
         />
       </div>
-      <div className="ce-track-lane" ref={laneRef}>
-        {links.map((l, i) => (
-          <span
-            key={`l${i}`}
-            className="ce-key-link"
-            aria-hidden="true"
-            style={{ left: `calc(${l.left}% + 4px)`, width: `calc(${l.width}% - 8px)` }}
-          />
-        ))}
-        {keys.map((k, i) => (
-          <Fragment key={i}>
-            <span
-              data-key={k.keyId}
-              className={`ce-key${selected.has(k.keyId) ? ' is-selected' : ''}${
-                Math.abs(k.tSec - playT) <= liveTol ? ' is-live' : ''
-              }`}
-              style={{ left: `${k.left}%` }}
-              title={k.title}
-            />
-            {vals &&
-              (edit?.keyId === k.keyId ? (
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  className={`ce-key-val is-edit${k.left > 82 ? ' is-flip' : ''}`}
-                  style={{ left: `${k.left}%` }}
-                  value={edit.draft}
-                  autoFocus
-                  onFocus={(e) => e.currentTarget.select()}
-                  onChange={(e) => setEdit({ ...edit, draft: e.target.value })}
-                  onBlur={commitEdit}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitEdit()
-                    else if (e.key === 'Escape') setEdit(null)
-                  }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                  aria-label={`编辑${label}关键帧值`}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className={`ce-key-val${k.left > 82 ? ' is-flip' : ''}`}
-                  style={{ left: `${k.left}%` }}
-                  title="点击修改该值"
-                  onClick={() => setEdit({ wp: k.wp, keyId: k.keyId, draft: k.raw })}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                >
-                  {k.chip}
-                </button>
+      <div
+        className={`ce-track-lane${showCurve ? ' is-curve' : ''}`}
+        ref={laneRef}
+        data-ch={showCurve ? id : undefined}
+        data-vmin={showCurve && range ? range.min : undefined}
+        data-vmax={showCurve && range ? range.max : undefined}
+      >
+        {showCurve ? (
+          <>
+            <div className="ce-curve-grid" aria-hidden="true">
+              {gridTicks.map((g) => (
+                <span key={`g${g.top}`} className="ce-curve-gridline" style={{ top: `${g.top}%` }} />
               ))}
-          </Fragment>
-        ))}
+              {gridTicks.map((g) => (
+                <i key={`t${g.top}`} className="ce-curve-tick" style={{ top: `${g.top}%` }}>
+                  {formatChannelValue(ch, g.value)}
+                </i>
+              ))}
+            </div>
+            <svg
+              className="ce-curve-svg"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <polyline
+                className="ce-curve-line"
+                points={curvePts}
+                vectorEffect="non-scaling-stroke"
+              />
+              {handles.map((h) => (
+                <line
+                  key={h.id}
+                  className="ce-ease-line"
+                  x1={h.x1}
+                  y1={h.y1}
+                  x2={h.x2}
+                  y2={h.y2}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </svg>
+            {keys.map((k, i) => (
+              <Fragment key={i}>
+                <span
+                  data-key={k.keyId}
+                  data-wp={k.wp}
+                  data-ch={id}
+                  data-val={k.value}
+                  className={`ce-key is-curve-key${selected.has(k.keyId) ? ' is-selected' : ''}${
+                    Math.abs(k.tSec - playT) <= liveTol ? ' is-live' : ''
+                  }`}
+                  style={{ left: `${k.left}%`, top: `${yPct(k.value)}%` }}
+                  title={`${k.title} · 拖动改时间与值 · 右键设置缓动`}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onKeyMenu?.(k.wp, ch, e.clientX, e.clientY)
+                  }}
+                />
+                {valueTag(k, true)}
+              </Fragment>
+            ))}
+            {handles.map((h) => (
+              <span
+                key={h.id}
+                className="ce-ease-h"
+                data-h={h.id}
+                data-ch={id}
+                data-at={h.at}
+                data-bt={h.bt}
+                data-av={h.av}
+                data-bv={h.bv}
+                /* the key's OTHER segment — the mirror source for GES
+                   自动缓动 (omitted at a chain end: nothing to mirror into) */
+                data-oat={h.oat}
+                data-obt={h.obt}
+                data-oav={h.oav}
+                data-obv={h.obv}
+                /* the axis the lane is drawn on, so the drag can unwrap px →
+                   value against the SAME window (see handle drag in
+                   onRootPointerDown) */
+                data-vmin={range?.min}
+                data-vmax={range?.max}
+                style={{ left: `${h.left}%`, top: `${h.top}%` }}
+                title="拖动缓动手柄"
+              />
+            ))}
+          </>
+        ) : (
+          <>
+            {links.map((l, i) => (
+              <span
+                key={`l${i}`}
+                className="ce-key-link"
+                aria-hidden="true"
+                style={{ left: `calc(${l.left}% + 4px)`, width: `calc(${l.width}% - 8px)` }}
+              />
+            ))}
+            {keys.map((k, i) => (
+              <Fragment key={i}>
+                <span
+                  data-key={k.keyId}
+                  className={`ce-key${selected.has(k.keyId) ? ' is-selected' : ''}${
+                    Math.abs(k.tSec - playT) <= liveTol ? ' is-live' : ''
+                  }`}
+                  style={{ left: `${k.left}%` }}
+                  title={k.title}
+                />
+                {valueTag(k, false)}
+              </Fragment>
+            ))}
+          </>
+        )}
       </div>
     </div>
   )
@@ -1121,7 +1790,7 @@ function keySpans(
   id: ChannelId,
   duration: number,
   pct: (tSec: number) => number,
-): { left: number; title: string; keyId: string; tSec: number; chip: string; wp: number; raw: string }[] {
+): KeySpan[] {
   return keys.map((k) => ({
     left: pct(k.t * duration),
     tSec: k.t * duration,
@@ -1131,6 +1800,8 @@ function keySpans(
     /* source waypoint index + unformatted seed for the inline editor */
     wp: k.waypoint,
     raw: String(+k.value.toFixed(6)),
+    value: k.value,
+    ease: k.ease,
   }))
 }
 
