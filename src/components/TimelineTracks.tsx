@@ -1084,9 +1084,9 @@ export default function TimelineTracks() {
             if (!w || !from) return
             const prev = p > 0 ? kidx[p - 1] : undefined
             const nxt = p < kidx.length - 1 ? kidx[p + 1] : undefined
-            /** x,y are SEGMENT fractions — y sits on the side's base
-             *  (0 = segment start / 出, 1 = segment end / 入), so only the
-             *  offset from that base is a lever.
+            /** x,y are SEGMENT fractions and BOTH sit on the side's anchor
+             *  (0 = segment start / 出, 1 = segment end / 入): only the offset
+             *  from that anchor is a lever.
              *  moved key (its own handle): the lever is RIGID — both
              *    fractions rescaled, so the handle rides the key unchanged;
              *  neighbour handle (the FAR end moved): GES keeps its ANGLE and
@@ -1098,7 +1098,7 @@ export default function TimelineTracks() {
               h: { x: number; y: number },
               a: number,
               b: number,
-              baseY: 0 | 1,
+              anchor: 0 | 1,
               keepAngle: boolean,
             ) => {
               const oT = base[b] - base[a]
@@ -1109,16 +1109,26 @@ export default function TimelineTracks() {
               const nB = keyVal(b, c, true)
               const oV = oA != null && oB != null ? oB - oA : 0
               const nV = nA != null && nB != null ? nB - nA : 0
-              const off = h.y - baseY
-              const scaled =
+              /* BOTH axes scale about the handle's OWN key (anchor 0 = the
+                 segment start for 出, 1 = the segment end for 入). Scaling the
+                 raw x instead moved an 入 handle's time offset the wrong way:
+                 the two handles then stopped sharing a direction and the line
+                 broke at that key (P1 fine / P2 kinked in the screenshot —
+                 the affected end there is an 入 handle). */
+              const offX = h.x - anchor
+              const offY = h.y - anchor
+              const scaledY =
                 Math.abs(nV) > 1e-9 && Math.abs(oT) > 1e-9
                   ? keepAngle
-                    ? (off * oV * nT) / (oT * nV)
-                    : off * (oV / nV)
-                  : off
+                    ? (offY * oV * nT) / (oT * nV)
+                    : offY * (oV / nV)
+                  : offY
               return {
-                x: keepAngle || Math.abs(nT) < 1e-9 ? h.x : h.x * (oT / nT),
-                y: baseY + scaled,
+                x:
+                  keepAngle || Math.abs(nT) < 1e-9
+                    ? h.x
+                    : anchor + offX * (oT / nT),
+                y: anchor + scaledY,
               }
             }
             const spec: EaseSpec = { ...from }
