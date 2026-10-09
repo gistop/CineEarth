@@ -109,12 +109,6 @@ const EASE_ITEMS: { mode: EaseMode; label: string }[] = [
   { mode: 'hold', label: '跳跃' },
 ]
 
-/** Least time offset (as a fraction of the segment) a bezier control keeps
- *  from its key. A control sitting exactly ON the key's time turns the
- *  tangent vertical — the "尖锐" spike the GES auto/aligned modes never
- *  produce — so the aligned pair always keeps this gap. */
-const EASE_X_MIN = 0.04
-
 /** the seven GES attribute rows, in display order */const CHANNEL_ROWS: { id: ChannelId; label: string; group: InsertGroup }[] = [
   { id: 'lon', label: '相机经度', group: 'position' },
   { id: 'lat', label: '相机纬度', group: 'position' },
@@ -933,43 +927,72 @@ export default function TimelineTracks() {
       const value = h.vmax - ((cy - h.laneTop) / h.laneH) * (h.vmax - h.vmin)
       const tSpan = h.bT - h.aT
       const vSpan = h.bV - h.aV
-      /* the control also rides inside its own segment in TIME (x beyond 0..1
-         would cross the neighbour key and fold the curve back) and keeps
-         EASE_X_MIN of time from its key so the tangent can never turn
-         vertical */
-      const rawX = (tSec - h.aT) / (Math.abs(tSpan) > 1e-9 ? tSpan : 1e-9)
-      const x =
+      /* ---- index1.html "Aligned" ray model, in SCREEN PIXELS --------------
+         index1.html's canvas is a UNIT SQUARE, so its fraction metric IS its
+         screen metric and hypot(dx,dy) there is a perceptual length. A lane
+         is strongly ANISOTROPIC (1s ≈ 50px while 1m ≈ 0.2px on height), so
+         the same math in physical units preserved a meaningless
+         hypot(seconds, units): whenever the dragged direction's axis mix
+         differed from the partner's old one, the partner's SCREEN lever
+         collapsed or exploded by the anisotropy ratio. All ray/length math
+         therefore runs in px (kx = px/s, ky = px/unit — both frozen for the
+         gesture by dragRange): the handle tracks the cursor 1:1, the partner
+         keeps its exact screen length, and the pair stays collinear on
+         screen (a linear map preserves ±u). A handle may never point
+         backward in time: a mouse behind the key snaps the ray VERTICAL.
+         Travel is the mouse's own projection on the ray, capped only where
+         the tip would reach the NEIGHBOUR key. Value rides free — overshoot
+         is legal easing and the axis refits after the drag (curveRange). */
+      const kx = d.laneW / d.viewSpan
+      const ky =
+        Math.abs(h.vmax - h.vmin) > 1e-9 ? h.laneH / Math.abs(h.vmax - h.vmin) : 1e-9
+      const kT = h.side === 'out' ? h.aT : h.bT
+      const kV = h.side === 'out' ? h.aV : h.bV
+      const pxT = (tSec - kT) * kx
+      const pxV = (value - kV) * ky
+      const mag = Math.hypot(pxT, pxV)
+      if (mag < 1e-9) return
+      let uT = pxT / mag
+      let uV = pxV / mag
+      if (h.side === 'out' && uT < 0) {
+        uT = 0
+        uV = pxV < 0 ? -1 : 1
+      }
+      if (h.side === 'in' && uT > 0) {
+        uT = 0
+        uV = pxV < 0 ? -1 : 1
+      }
+      const proj = pxT * uT + pxV * uV
+      const capT =
         h.side === 'out'
-          ? Math.min(1, Math.max(EASE_X_MIN, rawX))
-          : Math.min(1 - EASE_X_MIN, Math.max(0, rawX))
-      const y = (value - h.aV) / (Math.abs(vSpan) > 1e-9 ? vSpan : 1e-9)
+          ? uT > 1e-9
+            ? (tSpan * kx) / uT
+            : Number.POSITIVE_INFINITY
+          : uT < -1e-9
+            ? (-tSpan * kx) / uT
+            : Number.POSITIVE_INFINITY
+      const L = Math.min(Math.max(0, proj), capT)
+      const x =
+        (h.side === 'out' ? 0 : 1) +
+        (L * uT / kx) / (Math.abs(tSpan) > 1e-9 ? tSpan : 1e-9)
+      const y =
+        (h.side === 'out' ? 0 : 1) +
+        (L * uV / ky) / (Math.abs(vSpan) > 1e-9 ? vSpan : 1e-9)
       const w = route.waypoints[h.wp]
       if (w) {
         const cur = { ...(w.ease ?? {}) }
         const spec: EaseSpec = { mode: 'both', ...cur[h.ch] }
         const next: EaseSpec = { ...spec, [h.side]: { x, y } }
-        /* ---- GES 自动缓动: ONE direction, TWO lengths ---------------------
-           The pair shares the dragged control's DIRECTION (so the line
-           through the key stays straight), but the partner is ROTATED, not
-           stretched: it keeps its own length (its own stored offset), so the
-           two sides may — and usually do — differ, and dragging one side
-           never resizes the other. That is GES/AE's aligned-handle rule; an
-           absolute mirror (equal offsets) forced both sides to match.
-           The offsets are compared in the PARTNER'S OWN segment fractions
-           (time fraction, value fraction): the only metric in which a long
-           or flat neighbour cannot inflate the control. An absolute slope
-           did exactly that (lever × oSpanT/tSpan ÷ oSpanV) and folded the
-           neighbour into the 谷-峰 from the screenshots.
-           The partner can never pass the NEIGHBOUR key horizontally: if the
-           rotated lever would, the whole lever is scaled down — a uniform
-           scale keeps it ON the shared line, so the tangent never kinks. */
+        /* ---- Aligned partner (index1.html): the direction is EXACTLY the
+           opposite ray (collinear by construction) and the length is the
+           partner's OWN pre-drag lever, measured in the same px metric —
+           its on-screen length survives the gesture untouched, shortened
+           only where its tip would reach ITS neighbour key (the shortening
+           scales the whole lever, so the shared line never bends). */
         if (spec.mode === 'both' && h.opp) {
           const o = h.opp
           const oSpanT = Math.abs(o.bT - o.aT) > 1e-9 ? o.bT - o.aT : 1e-9
           const oSpanV = Math.abs(o.bV - o.aV) > 1e-9 ? o.bV - o.aV : 1e-9
-          /* signed graph offsets from the key, on the dragged side */
-          const dOffT = (h.side === 'out' ? x : x - 1) * tSpan
-          const dOffV = (h.side === 'out' ? y : y - 1) * vSpan
           const partnerIn = h.side === 'out'
           const base = partnerIn ? 1 : 0
           /* the partner's OWN handle — its own length survives the gesture */
@@ -979,21 +1002,23 @@ export default function TimelineTracks() {
             : (EASE_SEED.both.out ?? { x: 0.42, y: 0 })
           const ownX = Math.min(1, Math.max(0, stored?.x ?? seed.x))
           const ownY = stored?.y ?? seed.y
-          const ownT = partnerIn ? ownX - 1 : ownX
-          const ownV = partnerIn ? ownY - 1 : ownY
-          const ownLen = Math.hypot(ownT, ownV)
-          /* the dragged direction, expressed in the partner's own fractions */
-          const dirT = dOffT / oSpanT
-          const dirV = dOffV / oSpanV
-          const dirLen = Math.hypot(dirT, dirV) || 1e-9
-          /* rotate to the opposite side at its own length, then fit the
-             partner inside its segment in TIME (never past the neighbour) */
-          const unitT = dirT / dirLen
-          const timeLen = ownLen * Math.abs(unitT)
-          const s = timeLen > 1e-9 ? Math.min(1, (1 - EASE_X_MIN) / timeLen) : 1
+          const ownT = (partnerIn ? ownX - 1 : ownX) * oSpanT
+          const ownV = (partnerIn ? ownY - 1 : ownY) * oSpanV
+          /* its own lever, in px (the SAME metric the ray uses) */
+          let ol = Math.max(Math.hypot(ownT * kx, ownV * ky), 1e-3)
+          /* partner ray = −u, capped where it would reach ITS neighbour */
+          const pT = -uT
+          const pcapT = partnerIn
+            ? pT > 1e-9
+              ? (Math.abs(oSpanT) * kx) / pT
+              : Number.POSITIVE_INFINITY
+            : pT < -1e-9
+              ? (Math.abs(oSpanT) * kx) / -pT
+              : Number.POSITIVE_INFINITY
+          ol = Math.min(ol, pcapT)
           next[partnerIn ? 'in' : 'out'] = {
-            x: base - (s * ownLen * unitT),
-            y: base - (s * ownLen * (dirV / dirLen)),
+            x: base + (ol * pT / kx) / oSpanT,
+            y: base + (ol * -uV / ky) / oSpanV,
           }
         }
         cur[h.ch] = next
@@ -1084,22 +1109,21 @@ export default function TimelineTracks() {
             if (!w || !from) return
             const prev = p > 0 ? kidx[p - 1] : undefined
             const nxt = p < kidx.length - 1 ? kidx[p + 1] : undefined
-            /** x,y are SEGMENT fractions and BOTH sit on the side's anchor
-             *  (0 = segment start / 出, 1 = segment end / 入): only the offset
-             *  from that anchor is a lever.
-             *  moved key (its own handle): the lever is RIGID — both
-             *    fractions rescaled, so the handle rides the key unchanged;
-             *  neighbour handle (the FAR end moved): GES keeps its ANGLE and
-             *    its x fraction, letting its length follow the segment — the
-             *    direction never tilts (that is what 图3/4 show), and the
-             *    pair through its key stays straight because a length change
-             *    along the same line cannot bend it. */
+            /** x,y are SEGMENT fractions anchored at the side's own key
+             *  (0 = segment start / 出, 1 = segment end / 入).
+             *  index1.html's key-drag rule, in ABSOLUTE graph units: a lever
+             *  RIDES its key with its (seconds, value) offset untouched — no
+             *  re-angling, no span-proportional re-scaling — and is only
+             *  SHORTENED along its own direction when the moved key squeezed
+             *  the segment enough that the tip would cross the neighbour key
+             *  (clampHB). Shortening scales both axes together, so every
+             *  direction survives the gesture and the pair through each key
+             *  stays straight. */
             const reproject = (
               h: { x: number; y: number },
               a: number,
               b: number,
               anchor: 0 | 1,
-              keepAngle: boolean,
             ) => {
               const oT = base[b] - base[a]
               const nT = times[b] - times[a]
@@ -1109,32 +1133,22 @@ export default function TimelineTracks() {
               const nB = keyVal(b, c, true)
               const oV = oA != null && oB != null ? oB - oA : 0
               const nV = nA != null && nB != null ? nB - nA : 0
-              /* BOTH axes scale about the handle's OWN key (anchor 0 = the
-                 segment start for 出, 1 = the segment end for 入). Scaling the
-                 raw x instead moved an 入 handle's time offset the wrong way:
-                 the two handles then stopped sharing a direction and the line
-                 broke at that key (P1 fine / P2 kinked in the screenshot —
-                 the affected end there is an 入 handle). */
-              const offX = h.x - anchor
-              const offY = h.y - anchor
-              const scaledY =
-                Math.abs(nV) > 1e-9 && Math.abs(oT) > 1e-9
-                  ? keepAngle
-                    ? (offY * oV * nT) / (oT * nV)
-                    : offY * (oV / nV)
-                  : offY
+              let offT = (h.x - anchor) * oT
+              let offV = (h.y - anchor) * oV
+              /* clampHB: shrink along the lever's OWN direction only */
+              if (Math.abs(offT) > Math.abs(nT) && Math.abs(offT) > 1e-9) {
+                const s = Math.abs(nT) / Math.abs(offT)
+                offT *= s
+                offV *= s
+              }
               return {
-                x:
-                  keepAngle || Math.abs(nT) < 1e-9
-                    ? h.x
-                    : anchor + offX * (oT / nT),
-                y: anchor + scaledY,
+                x: anchor + (Math.abs(nT) > 1e-9 ? offT / nT : 0),
+                y: anchor + (Math.abs(nV) > 1e-9 ? offV / nV : 0),
               }
             }
             const spec: EaseSpec = { ...from }
-            const moved = sel.includes(wpId(wi))
-            if (from.out && nxt != null) spec.out = reproject(from.out, wi, nxt, 0, !moved)
-            if (from.in && prev != null) spec.in = reproject(from.in, prev, wi, 1, !moved)
+            if (from.out && nxt != null) spec.out = reproject(from.out, wi, nxt, 0)
+            if (from.in && prev != null) spec.in = reproject(from.in, prev, wi, 1)
             const cur = w.ease?.[c]
             if (
               cur?.mode === spec.mode &&
