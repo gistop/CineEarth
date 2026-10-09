@@ -65,7 +65,9 @@ function currentCameraPose(): Pose | null {
 
 /**
  * Expanded multi-track editor (GES-style).
- * - Track label = solo toggle (click = focus channel, again = show all)
+ * - Track label = row selection: click = the lane column shows THAT channel's
+ *   detail (attribute rows: the value-mapped curve pane), click again = clear.
+ *   The label column keeps every row — a selection never hides a track name.
  * - Keys are rubber-band selectable (drag on empty area) and selected keys
  *   drag horizontally in time: waypoint keys rewrite segment durations,
  *   growth keys move their t (single growth key keeps the y = % adjust).
@@ -469,9 +471,11 @@ function zoomAtView(
 }
 
 export default function TimelineTracks() {
+  /* ONE selected channel drives the LANE column only: the label column always
+     renders every row (so the track list never re-flows), while the lanes area
+     shows just the selected channel's detail — see .ce-lanes.is-detail. */
   const [solo, setSolo] = useState<TrackId | null>(null)
   const toggleSolo = (id: TrackId) => setSolo((cur) => (cur === id ? null : id))
-  const show = (id: TrackId) => solo === null || solo === id
 
   /** unified key selection (wp:<i> | gr:<id>) shared by every track */
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -1198,38 +1202,36 @@ export default function TimelineTracks() {
       {/* NO ruler row here — the one ruler lives in the transport bar above;
           the lanes grid aligns to its measured edges via --ce-tl-axis-l/r. */}
       {/* lanes scroll vertically when the rows don't fit */}
-      <div className="ce-lanes" ref={lanesRef}>
-      {CHANNEL_ROWS.map(
-        (row) =>
-          show(row.id) && (
-            <ChannelTrack
-              key={row.id}
-              id={row.id}
-              label={row.label}
-              value={pose ? formatChannelValue(row.id, pose[row.id]) : undefined}
-              solo={solo}
-              onToggle={toggleSolo}
-              selected={selected}
-              keys={keySpans(channels[row.id], row.id, content, pct)}
-              onInsert={() => insertFromCamera(row.group)}
-              curve={curveId === row.id}
-              range={range}
-              onKeyMenu={openKeyMenu}
-            />
-          ),
-      )}
+      <div className={`ce-lanes${curveId ? ' is-detail' : ''}`} ref={lanesRef}>
+      {/* every row is ALWAYS rendered — the label column is the stable list,
+          the lanes area is what changes with the selection */}
+      {CHANNEL_ROWS.map((row) => (
+        <ChannelTrack
+          key={row.id}
+          id={row.id}
+          label={row.label}
+          value={pose ? formatChannelValue(row.id, pose[row.id]) : undefined}
+          solo={solo}
+          onToggle={toggleSolo}
+          selected={selected}
+          keys={keySpans(channels[row.id], row.id, content, pct)}
+          onInsert={() => insertFromCamera(row.group)}
+          curve={curveId === row.id}
+          range={range}
+          onKeyMenu={openKeyMenu}
+        />
+      ))}
 
       {/* growth line — dbl-click lane adds a key, dbl-click a key removes it.
           Selection & dragging are handled by the container (see onRootPointerDown). */}
-      {show('growth') && (
+      {/* Growth has no detail pane, so its label is a plain read-only label
+          (selecting it would blank every lane and show nothing). */}
         <div className="ce-track">
           <div className="ce-track-side">
             <SoloLabel
               id="growth"
               label="Growth"
               value={growthLine ? 'on' : undefined}
-              solo={solo}
-              onToggle={toggleSolo}
             />
             <InsertKeyBtn
               label="Growth"
@@ -1272,7 +1274,6 @@ export default function TimelineTracks() {
             ))}
           </div>
         </div>
-      )}
 
       </div>
 
@@ -1354,7 +1355,10 @@ export default function TimelineTracks() {
   )
 }
 
-/** label doubles as the GES solo toggle: click = focus, click again = show all */
+/** label doubles as the row selector: click = this channel's detail takes over
+ *  the LANE column (attribute rows: the value-mapped curve pane), click again
+ *  = clear. The label column itself never changes — no row is ever hidden — so
+ *  rows without a detail view (growth) render a plain read-only label. */
 function SoloLabel({
   id,
   label,
@@ -1365,15 +1369,24 @@ function SoloLabel({
   id: TrackId
   label: string
   value?: string
-  solo: TrackId | null
-  onToggle: (id: TrackId) => void
+  /** the row selection (only needed when the label is a toggle) */
+  solo?: TrackId | null
+  onToggle?: (id: TrackId) => void
 }) {
+  if (!onToggle) {
+    return (
+      <div className="ce-track-label" title={label}>
+        <span className="ce-track-name">{label}</span>
+        {value != null && <span className="ce-track-value">{value}</span>}
+      </div>
+    )
+  }
   return (
     <button
       type="button"
       className={`ce-track-label${solo === id ? ' is-solo' : ''}`}
       onClick={() => onToggle(id)}
-      title={`${label} — 单击只显示此通道，再次单击显示全部`}
+      title={`${label} — 单击选中：右侧显示该通道曲线，左侧列表保持全部；再次单击取消`}
     >
       <span className="ce-track-name">{label}</span>
       {value != null && <span className="ce-track-value">{value}</span>}
@@ -1668,7 +1681,11 @@ function ChannelTrack({
   }
 
   return (
-    <div className={`ce-track${showCurve ? ' is-curve' : ''}`}>
+    <div
+      className={`ce-track${showCurve ? ' is-curve' : ''}${
+        solo === id ? ' is-selected' : ''
+      }`}
+    >
       <div className="ce-track-side">
         <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />
         <button

@@ -449,6 +449,9 @@
   overflow-x: hidden;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  /* containing block of the detail pane (.ce-lanes.is-detail): the pane must
+     measure against the AREA, never against its 24px row */
+  position: relative;
 }
 .ce-lanes::-webkit-scrollbar {
   width: 6px;
@@ -936,12 +939,41 @@
  * mirrors Earth Studio's single-track view (its hue is fixed on purpose: the
  * line must not read as "selected" the way the accent blue does).
  * ------------------------------------------------------------------------- */
-.ce-track.is-curve {
-  align-items: stretch;
-}
+/* the pane draws the whole lane area itself: no fixed slab height anywhere */
 .ce-track-lane.is-curve {
-  min-height: 150px;
   cursor: crosshair;
+}
+/* ---- selection: ONE detail pane, the label list untouched ----------------
+   Selecting a track paints only ITS lane (attribute rows: the value-mapped
+   curve editor); every other lane is hidden, but every LABEL stays where it
+   was. The pane leaves the row flow — the rows keep their own height and their
+   exact rhythm, so the left column never re-flows — and it spans the WHOLE
+   lane area (top to bottom of .ce-lanes) instead of a fixed slab: GES's graph
+   editor IS the panel, and a fixed height either left dead space under the
+   curve or, with a low row selected, pushed the pane past the bottom edge. */
+.ce-lanes.is-detail .ce-track-lane:not(.is-curve) {
+  visibility: hidden;
+}
+.ce-lanes.is-detail .ce-track-lane.is-curve {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* the lane column's own left edge (same terms .ce-axis uses): .ce-lanes'
+     padding box starts at the label column, so the column gap is added */
+  left: calc(var(--lane-label) + var(--ce-lane-gap));
+  /* end where a normal lane ends: the row's --ce-lane-key-room padding is
+     given up here. min-height 0 so a short panel squeezes the pane instead of
+     forcing a scrollbar. */
+  right: var(--ce-lane-key-room);
+  min-height: 0;
+}
+/* selected row: the label cell is tinted and the name takes the accent.
+   Background only — the label's padding/margins/text position are never
+   touched, so the list cannot re-flow. */
+.ce-track.is-selected .ce-track-side {
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--ce-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ce-accent) 26%, transparent);
 }
 .ce-curve-grid {
   position: absolute;
