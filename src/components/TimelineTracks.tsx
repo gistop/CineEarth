@@ -5,7 +5,6 @@ import { useRoute } from '../features/route/routeStore'
 import { useReveal } from '../features/route/revealStore'
 import {
   angleDeltaDeg,
-  easeFraction,
   normalizeAngleDeg,
   samplePose,
   timelineDuration,
@@ -33,6 +32,8 @@ import {
   type ChannelKey,
 } from '../features/route/cameraChannels'
 import TimelineSettings from './TimelineSettings'
+import ValueBars from './ValueBars'
+import { laneValueAt } from './laneValue'
 
 /** live 3D camera as a route Pose (degrees, north-clockwise heading) — the
  *  seed the insert-key buttons use when the route has no keys yet; null when
@@ -1470,6 +1471,8 @@ function ChannelTrack({
      button controls only its own lane */
   const vals = useUI((s) => !!s.tlKeyValues[id])
   const toggleVals = useUI((s) => s.toggleTlKeyValues)
+  /* value bars — GLOBAL toggle from the Props tab (default on) */
+  const laneBars = useUI((s) => s.laneBars)
   /* click a value tag → inline edit. Commit writes the channel field back to
      the source waypoint — ChannelId names match Waypoint fields 1:1. */
   const [edit, setEdit] = useState<{ wp: number; keyId: string; draft: string } | null>(null)
@@ -1523,41 +1526,17 @@ function ChannelTrack({
   /** lane percent top-down for a channel value */
   const yPct = (v: number) =>
     range ? 100 - ((v - range.min) / Math.max(range.max - range.min, 1e-9)) * 100 : 50
-  /* The drawn curve is the ATTRIBUTE's own interpolation curve: per segment
-     a → a + (b − a)·easeFraction(local) — literally what the graph handles
-     describe, and what GES's graph editor shows (hold=step shows up too).
-     It used to be re-sampled through samplePose; for the position group that
-     runs a Catmull-Rom over the keys, and there an overshooting handle sends
-     the EASED PARAMETER past 1 — the spline gets evaluated beyond its own
-     segment and the drawing folds into an extra 谷-峰 the handles never
-     describe. Heading/pitch are the exception: with a target the flight
-     re-aims them every frame, so those keep the flown sample. */
+  /* the drawn curve is the channel's own interpolation — sampled through the
+     SHARED laneValueAt (the same math the lane value bars use). Rationale
+     lives in laneValue.ts: attribute curve, not the position spline;
+     heading/pitch with a target keep the flown sample. */
   let curvePts = ''
   if (showCurve) {
     const N = 160
-    const aimed = route.target != null && (ch === 'heading' || ch === 'pitch')
     const pts: string[] = []
     for (let i = 0; i <= N; i += 1) {
       const tSec = viewStart + (i / N) * viewSpan
-      let v: number | null
-      if (aimed) {
-        v = samplePose(route, timelineProgressToRoute(route, tSec / DURATION))?.[ch] ?? null
-      } else if (keys.length === 0) {
-        v = null
-      } else if (tSec <= keys[0].tSec) {
-        v = keys[0].value
-      } else if (tSec >= keys[keys.length - 1].tSec) {
-        v = keys[keys.length - 1].value
-      } else {
-        let j = 1
-        while (j < keys.length && keys[j].tSec < tSec) j += 1
-        const a = keys[j - 1]
-        const b = keys[j]
-        const local = (tSec - a.tSec) / Math.max(b.tSec - a.tSec, 1e-9)
-        const u = easeFraction(local, a.ease, b.ease)
-        const delta = ch === 'heading' ? angleDeltaDeg(a.value, b.value) : b.value - a.value
-        v = a.value + delta * u
-      }
+      const v = laneValueAt(keys, ch, route, tSec, DURATION)
       if (v == null) continue
       pts.push(`${leftPct(tSec).toFixed(2)},${yPct(v).toFixed(2)}`)
     }
@@ -1811,6 +1790,16 @@ function ChannelTrack({
           </>
         ) : (
           <>
+            {laneBars && keys.length > 0 && (
+              <ValueBars
+                keys={keys}
+                ch={ch}
+                route={route}
+                viewStart={viewStart}
+                viewSpan={viewSpan}
+                duration={DURATION}
+              />
+            )}
             {links.map((l, i) => (
               <span
                 key={`l${i}`}

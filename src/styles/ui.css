@@ -241,38 +241,34 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  /* the ring makes a white chip visible on a white panel */
-  border: 1px solid rgb(0 0 0 / 18%);
+  /* neutral ring, not a black one: the near-black chip would otherwise vanish
+     on the dark panel, and it must still read if a light theme ever returns */
+  border: 1px solid rgb(140 140 140 / 55%);
 }
 .ce-theme-swatches i + i {
   margin-left: -5px;
 }
-.ce-theme-swatches.is-classic i:nth-child(1) {
-  background: #fbfbfa;
+/* chip 1/2 are the shared 黑白 base — near-black surface + off-white ink —
+   and chip 3 is the accent that names each member (橙 / 蓝 / 中性灰). The
+   family reads as: same two discs, the third tells you which one it is. */
+.ce-theme-swatches.is-bw i:nth-child(1),
+.ce-theme-swatches.is-bwo i:nth-child(1),
+.ce-theme-swatches.is-bwb i:nth-child(1) {
+  background: #0b0c0e;
 }
-.ce-theme-swatches.is-classic i:nth-child(2) {
-  background: #38618c;
-}
-.ce-theme-swatches.is-classic i:nth-child(3) {
-  background: #96968f;
-}
-.ce-theme-swatches.is-bw i:nth-child(1) {
-  background: #101113;
-}
-.ce-theme-swatches.is-bw i:nth-child(2) {
-  background: #f4f5f7;
+.ce-theme-swatches.is-bw i:nth-child(2),
+.ce-theme-swatches.is-bwo i:nth-child(2),
+.ce-theme-swatches.is-bwb i:nth-child(2) {
+  background: #f2f3f5;
 }
 .ce-theme-swatches.is-bw i:nth-child(3) {
   background: #6e737b;
 }
-.ce-theme-swatches.is-bwo i:nth-child(1) {
-  background: #101113;
-}
-.ce-theme-swatches.is-bwo i:nth-child(2) {
+.ce-theme-swatches.is-bwo i:nth-child(3) {
   background: #f97316;
 }
-.ce-theme-swatches.is-bwo i:nth-child(3) {
-  background: #6e737b;
+.ce-theme-swatches.is-bwb i:nth-child(3) {
+  background: #4c9aff;
 }
 .ce-theme-name {
   font-size: 12px;
@@ -281,6 +277,48 @@
 .ce-theme-opt.is-on .ce-theme-name {
   color: var(--ce-text);
   font-weight: 500;
+}
+
+/* --- switch (Props toggles) ------------------------------------------------
+ * pill + knob; the knob slides 14px and takes the accent when on. Token-
+ * driven, so it re-skins with the theme like everything else. */
+.ce-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ce-switch {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--ce-surface-3);
+  border: 1px solid var(--ce-border-strong);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.ce-switch .ce-switch-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ce-text-2);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.ce-switch.is-on {
+  background: var(--ce-accent-soft);
+  border-color: var(--ce-accent);
+}
+.ce-switch.is-on .ce-switch-knob {
+  transform: translateX(14px);
+  background: var(--ce-accent);
+}
+.ce-switch-text {
+  font-size: 12px;
+  color: var(--ce-text-2);
 }
 
 .ce-row {
@@ -1275,6 +1313,18 @@
    distinguishable from a selected key) */
 .ce-key.is-live {
   background: var(--ce-accent);
+}
+
+/* value bars — the lane's DATA layer: canvas of bottom-anchored bars whose
+   height is the channel value at that moment (waveform-style). Painted FIRST
+   in the lane, so the link, diamonds and tags sit on top of it; fully
+   pointer-transparent. Sizing/ink live in ValueBars.tsx. */
+.ce-value-bars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 /* connector between ADJACENT keys: the span this channel interpolates over

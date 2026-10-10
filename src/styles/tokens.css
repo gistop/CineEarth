@@ -1,5 +1,12 @@
 /* ============================================================
-   CineEarth design tokens — Nordic: airy, calm, restrained
+   CineEarth design tokens
+   ------------------------------------------------------------
+   :root holds the BASE palette (the original Nordic light look).
+   It is also the fallback for anything a theme block forgets, so
+   each [data-theme] block below re-declares the FULL color set
+   and inherits only the theme-agnostic tokens (radius, motion,
+   fonts, metrics). The light look is currently not exposed in
+   the picker — re-adding it is one registry entry + one block.
    ============================================================ */
 :root {
   /* surfaces */
@@ -145,6 +152,55 @@
 
   /* semantics: danger stays red; warn moves to yellow to clear the warm
      band for the accent */
+  --ce-danger: #e5544b;
+  --ce-danger-soft: rgb(229 84 75 / 14%);
+  --ce-warn: #c9a227;
+  --ce-warn-soft: rgb(201 162 39 / 14%);
+
+  --ce-hover: #23262b;
+  --ce-chrome: rgb(16 17 19 / 88%);
+
+  --ce-shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --ce-shadow-panel: 6px 0 28px rgb(0 0 0 / 55%), 0 1px 2px rgb(0 0 0 / 40%);
+  --ce-shadow-bar: 0 -8px 28px rgb(0 0 0 / 55%);
+}
+
+/* ============================================================
+   Theme: 黑白蓝 (bwb) — the same skeleton, GIS-blue accent
+   ------------------------------------------------------------
+   Third member of the 黑白 family: identical near-black elevation,
+   off-white ink, hairline borders. Only the accent changes —
+   blue instead of orange — so it keeps the familiarity of a
+   QGIS/ArcGIS-Pro dark skin. Caveat that shaped the tune: blue
+   lives in the same hue band as water and shadow in satellite
+   imagery, so this theme trades some "UI vs data" separation for
+   that familiarity; keep an eye on it when a classified mask
+   lands on the globe. Curve ink (--ce-data) sits a luminance
+   step ABOVE the accent so data never reads as "selection".
+   ============================================================ */
+[data-theme='bwb'] {
+  /* surfaces / ink — identical to bw */
+  --ce-bg: #0b0c0e;
+  --ce-surface: #101113;
+  --ce-surface-2: #181a1d;
+  --ce-surface-3: #202226;
+  --ce-border: #272a30;
+  --ce-border-strong: #3a3e46;
+  --ce-text: #f2f3f5;
+  --ce-text-2: #a7acb4;
+  --ce-text-3: #6e737b;
+
+  /* accent — blue; dark ink on it (≈6.7:1), small text on near-black ≈6.6:1 */
+  --ce-accent: #4c9aff;
+  --ce-accent-hover: #6badff;
+  --ce-accent-soft: rgb(76 154 255 / 12%);
+  --ce-on-accent: #0b0c0e;
+
+  /* data ink — lighter blue: same family, one luminance step above the
+     accent so curves never read as "selection" */
+  --ce-data: #9cc7f5;
+
+  /* semantics: danger red, warn yellow — neither competes with the blue */
   --ce-danger: #e5544b;
   --ce-danger-soft: rgb(229 84 75 / 14%);
   --ce-warn: #c9a227;

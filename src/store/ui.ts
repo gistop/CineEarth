@@ -5,7 +5,7 @@ import { loadTheme, type ThemeId } from '../features/settings/theme'
 export const TL_H_DEFAULT = 232
 const TL_H_MIN = 140
 /* full-height allowed: the grip sits on the panel's own top edge, so it stays
-   grabbable even when the timeline covers the whole viewport */
+ *  grabbable even when the timeline covers the whole viewport */
 const clampTlHeight = (h: number) =>
   Math.round(Math.min(Math.max(h, TL_H_MIN), window.innerHeight))
 
@@ -44,6 +44,11 @@ interface UIState {
   /** keyframe value tags at each key's bottom-right — per channel, default off */
   tlKeyValues: Record<string, boolean>
 
+  /** waveform-style value bars in track lanes (Props toggle, default on) —
+   *  bar height = channel value at that moment; pure display, sampling and
+   *  interaction are untouched */
+  laneBars: boolean
+
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
   toggleRightDrawer: (open?: boolean) => void
@@ -59,6 +64,7 @@ interface UIState {
   resetTlView: () => void
   setTlUnit: (u: 'sec' | 'frame') => void
   toggleTlKeyValues: (id: string) => void
+  setLaneBars: (on: boolean) => void
 
   /** interface theme (Props tab) — style-only, applied via [data-theme] */
   theme: ThemeId
@@ -80,6 +86,7 @@ export const useUI = create<UIState>((set) => ({
   tlView: { start: 0, span: Infinity },
   tlUnit: 'sec',
   tlKeyValues: {},
+  laneBars: true,
 
   theme: loadTheme(),
   setTheme: (t) => set({ theme: t }),
@@ -102,4 +109,5 @@ export const useUI = create<UIState>((set) => ({
   setTlUnit: (u) => set({ tlUnit: u }),
   toggleTlKeyValues: (id) =>
     set((s) => ({ tlKeyValues: { ...s.tlKeyValues, [id]: !s.tlKeyValues[id] } })),
+  setLaneBars: (on) => set({ laneBars: on }),
 }))
