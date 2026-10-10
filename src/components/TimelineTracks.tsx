@@ -1216,6 +1216,7 @@ export default function TimelineTracks() {
           selected={selected}
           keys={keySpans(channels[row.id], row.id, content, pct)}
           onInsert={() => insertFromCamera(row.group)}
+          group={row.group}
           curve={curveId === row.id}
           range={range}
           onKeyMenu={openKeyMenu}
@@ -1396,20 +1397,26 @@ function SoloLabel({
 
 /** insert-keyframe button (GES-style attribute row). Renders as a hollow
  *  keyframe diamond that fills on hover. Rows without a key action may
- *  still omit onInsert (renders DISABLED). */
+ *  still omit onInsert (renders DISABLED). `group` tags the button with its
+ *  insert-group: lon/lat/height share 'position', and CSS (:has) lights the
+ *  WHOLE group on hover — one click keys all three, so the hover must read
+ *  as one group action. */
 function InsertKeyBtn({
   label,
   title,
   onInsert,
+  group,
 }: {
   label: string
   title?: string
   onInsert?: () => void
+  group?: InsertGroup
 }) {
   return (
     <button
       type="button"
       className="ce-kf-add"
+      data-group={group}
       title={title ?? `在播放头处插入${label}关键帧`}
       aria-label={`插入${label}关键帧`}
       disabled={!onInsert}
@@ -1430,6 +1437,7 @@ function ChannelTrack({
   selected,
   keys,
   onInsert,
+  group,
   curve,
   range,
   onKeyMenu,
@@ -1442,6 +1450,9 @@ function ChannelTrack({
   selected: Set<string>
   keys: KeySpan[]
   onInsert?: () => void
+  /** the row's insert-group: lon/lat/height share 'position' (one click keys
+   *  all three) — rides along so the three ◇ buttons hover as ONE group */
+  group: InsertGroup
   /** this row is the soloed attribute → GES value-mapped curve editor */
   curve?: boolean
   /** value window for the curve (frozen while a drag runs) */
@@ -1700,7 +1711,12 @@ function ChannelTrack({
         </button>
         <InsertKeyBtn
           label={label}
-          title="在播放头处插入关键帧（航点键 · 相机通道同步落帧）"
+          group={group}
+          title={
+            group === 'position'
+              ? '在播放头处插入关键帧（位置组：经度/纬度/海拔 同步落键）'
+              : '在播放头处插入关键帧（仅本通道落键）'
+          }
           onInsert={onInsert}
         />
       </div>

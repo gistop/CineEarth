@@ -19,10 +19,21 @@
   --ce-accent: #38618c;
   --ce-accent-hover: #2e5175;
   --ce-accent-soft: #ebf1f7;
+  /* ink sitting ON an accent fill (play button, render button, ruler flag) —
+     flips dark in themes whose accent is light (bw) */
+  --ce-on-accent: #ffffff;
   --ce-danger: #b3563d;
+  --ce-danger-soft: #f7ebe7;
   /* warning — timeline length shorter than the content (a nudge, not an error) */
   --ce-warn: #a8802f;
   --ce-warn-soft: #f7f1e4;
+  /* DATA color — the curve editor's line/keys/handles (one hue for "this
+     channel's values"). Chrome tokens stay neutral; this is the data ink. */
+  --ce-data: #4c9a5a;
+  /* quiet hover fill for accent-soft buttons (transport, render) */
+  --ce-hover: #dfe9f2;
+  /* floating chrome (preview badge & friends): translucent + blur */
+  --ce-chrome: rgba(255, 255, 255, 0.92);
 
   /* shape & depth */
   --ce-radius: 10px;
@@ -44,4 +55,105 @@
   --ce-drawer-w: 340px;
   --ce-tl-collapsed: 48px;
   --ce-tl-expanded: 232px;
+}
+
+/* ============================================================
+   Theme: 黑白 (bw) — Linear-style mono on a map project
+   ------------------------------------------------------------
+   Near-black panels + off-white ink; the accent IS white, so every
+   "current" state (selected row, playhead, keys, focus) is the brightest
+   thing on screen. The globe, imagery and status dots stay the only
+   color — the chrome frames the map instead of competing with it.
+   Values follow the 90/8/2 rule: neutrals carry the hierarchy, one
+   accent carries "now", semantic hues stay for status only.
+   ============================================================ */
+[data-theme='bw'] {
+  /* surfaces — 3-step elevation, borders over shadows */
+  --ce-bg: #0b0c0e;
+  --ce-surface: #101113;
+  --ce-surface-2: #181a1d;
+  --ce-surface-3: #202226;
+  --ce-border: #272a30;
+  --ce-border-strong: #3a3e46;
+
+  /* ink — off-white, never #fff (halation on small mono type) */
+  --ce-text: #f2f3f5;
+  --ce-text-2: #a7acb4;
+  --ce-text-3: #6e737b;
+
+  /* accent = white; everything on it flips dark */
+  --ce-accent: #f4f5f7;
+  --ce-accent-hover: #ffffff;
+  --ce-accent-soft: rgb(244 245 247 / 10%);
+  --ce-on-accent: #101113;
+
+  /* data ink — near-white curve on near-black pane */
+  --ce-data: #e9ebee;
+
+  /* semantics kept (a map tool must still say "error" at a glance),
+     re-tuned for dark: same hues, lifted lightness */
+  --ce-danger: #e5544b;
+  --ce-danger-soft: rgb(229 84 75 / 14%);
+  --ce-warn: #d29a3d;
+  --ce-warn-soft: rgb(210 154 61 / 14%);
+
+  --ce-hover: #23262b;
+  --ce-chrome: rgb(16 17 19 / 88%);
+
+  /* depth — shadows go near-opaque; on dark they separate by darkness */
+  --ce-shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --ce-shadow-panel: 6px 0 28px rgb(0 0 0 / 55%), 0 1px 2px rgb(0 0 0 / 40%);
+  --ce-shadow-bar: 0 -8px 28px rgb(0 0 0 / 55%);
+}
+
+/* ============================================================
+   Theme: 黑白橙 (bwo) — the bw skeleton with an orange accent
+   ------------------------------------------------------------
+   Same near-black 3-step elevation and off-white ink as bw; the
+   accent swaps white → orange so every "current" state (playhead,
+   selected-row band, key borders, focus rings) reads as ONE warm
+   signal against neutral chrome. Orange is spent only there, plus
+   the single filled CTA (play/render — dark ink on it, ≈6.7:1);
+   text stays white/gray. That restraint is the whole "premium,
+   not loud" trick (the 90/8/2 rule). Warn steps off amber →
+   yellow so the accent owns the warm band alone, and the curve
+   ink (--ce-data) is a LIGHTER orange — data and "current" share
+   a family but never merge.
+   ============================================================ */
+[data-theme='bwo'] {
+  /* surfaces / ink — identical to bw */
+  --ce-bg: #0b0c0e;
+  --ce-surface: #101113;
+  --ce-surface-2: #181a1d;
+  --ce-surface-3: #202226;
+  --ce-border: #272a30;
+  --ce-border-strong: #3a3e46;
+  --ce-text: #f2f3f5;
+  --ce-text-2: #a7acb4;
+  --ce-text-3: #6e737b;
+
+  /* accent — orange; bright enough for small text on near-black (≈6.7:1)
+     and everything it fills flips to dark ink */
+  --ce-accent: #f97316;
+  --ce-accent-hover: #ff8a3d;
+  --ce-accent-soft: rgb(249 115 22 / 12%);
+  --ce-on-accent: #101113;
+
+  /* data ink — lighter/desaturated orange: same family as the accent,
+     one luminance step apart so curves never read as "selection" */
+  --ce-data: #f2a65a;
+
+  /* semantics: danger stays red; warn moves to yellow to clear the warm
+     band for the accent */
+  --ce-danger: #e5544b;
+  --ce-danger-soft: rgb(229 84 75 / 14%);
+  --ce-warn: #c9a227;
+  --ce-warn-soft: rgb(201 162 39 / 14%);
+
+  --ce-hover: #23262b;
+  --ce-chrome: rgb(16 17 19 / 88%);
+
+  --ce-shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --ce-shadow-panel: 6px 0 28px rgb(0 0 0 / 55%), 0 1px 2px rgb(0 0 0 / 40%);
+  --ce-shadow-bar: 0 -8px 28px rgb(0 0 0 / 55%);
 }

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { loadTheme, type ThemeId } from '../features/settings/theme'
 
 /** expanded-timeline height (px) — default mirrors --ce-tl-expanded in tokens */
 export const TL_H_DEFAULT = 232
@@ -58,6 +59,10 @@ interface UIState {
   resetTlView: () => void
   setTlUnit: (u: 'sec' | 'frame') => void
   toggleTlKeyValues: (id: string) => void
+
+  /** interface theme (Props tab) — style-only, applied via [data-theme] */
+  theme: ThemeId
+  setTheme: (t: ThemeId) => void
 }
 
 export const useUI = create<UIState>((set) => ({
@@ -75,6 +80,9 @@ export const useUI = create<UIState>((set) => ({
   tlView: { start: 0, span: Infinity },
   tlUnit: 'sec',
   tlKeyValues: {},
+
+  theme: loadTheme(),
+  setTheme: (t) => set({ theme: t }),
 
   toggleDrawer: (open) => set((s) => ({ drawerOpen: open ?? !s.drawerOpen })),
   setDrawerTab: (tab) => set({ drawerTab: tab, drawerOpen: true }),

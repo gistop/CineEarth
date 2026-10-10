@@ -8,12 +8,21 @@ import RouteSceneBridge from './features/route/RouteSceneBridge'
 import SunPanel from './features/settings/SunPanel'
 import { useReveal } from './features/route/revealStore'
 import { useUI } from './store/ui'
+import { applyTheme } from './features/settings/theme'
 import './styles/ui.css'
 
 export default function App() {
   const previewMode = useUI((s) => s.previewMode)
   const timelineExpanded = useUI((s) => s.timelineExpanded)
   const tlHeight = useUI((s) => s.tlHeight)
+  const theme = useUI((s) => s.theme)
+
+  /* one data-theme attribute on <html> — tokens.css swaps the whole palette.
+   * Runs on mount too, so a persisted theme (loadTheme) paints before the
+   * chrome settles. Style-only by construction. */
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
 
   /* Kill in-page HTML5 drags (text-selection / image drags). Once one starts,
      the browser swallows every pointermove and flashes the native no-drop

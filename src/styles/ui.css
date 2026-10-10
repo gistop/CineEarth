@@ -205,6 +205,84 @@
   color: var(--ce-text-3);
 }
 
+/* ---------- interface theme picker (Props tab) ----------
+   Options come from the THEMES registry (features/settings/theme.ts); the
+   swatch chips are FIXED paints per theme — not tokens — so each preview
+   keeps its own look whatever the app currently wears. */
+.ce-theme-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+  margin: 0 6px 4px;
+}
+.ce-theme-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
+  background: var(--ce-surface);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ce-theme-opt:hover {
+  border-color: var(--ce-border-strong);
+}
+.ce-theme-opt.is-on {
+  border-color: var(--ce-accent);
+  box-shadow: 0 0 0 1px var(--ce-accent);
+}
+/* three overlapping chips: surface / accent / muted */
+.ce-theme-swatches {
+  display: flex;
+  flex: none;
+}
+.ce-theme-swatches i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  /* the ring makes a white chip visible on a white panel */
+  border: 1px solid rgb(0 0 0 / 18%);
+}
+.ce-theme-swatches i + i {
+  margin-left: -5px;
+}
+.ce-theme-swatches.is-classic i:nth-child(1) {
+  background: #fbfbfa;
+}
+.ce-theme-swatches.is-classic i:nth-child(2) {
+  background: #38618c;
+}
+.ce-theme-swatches.is-classic i:nth-child(3) {
+  background: #96968f;
+}
+.ce-theme-swatches.is-bw i:nth-child(1) {
+  background: #101113;
+}
+.ce-theme-swatches.is-bw i:nth-child(2) {
+  background: #f4f5f7;
+}
+.ce-theme-swatches.is-bw i:nth-child(3) {
+  background: #6e737b;
+}
+.ce-theme-swatches.is-bwo i:nth-child(1) {
+  background: #101113;
+}
+.ce-theme-swatches.is-bwo i:nth-child(2) {
+  background: #f97316;
+}
+.ce-theme-swatches.is-bwo i:nth-child(3) {
+  background: #6e737b;
+}
+.ce-theme-name {
+  font-size: 12px;
+  color: var(--ce-text-2);
+}
+.ce-theme-opt.is-on .ce-theme-name {
+  color: var(--ce-text);
+  font-weight: 500;
+}
+
 .ce-row {
   display: flex;
   align-items: center;
@@ -382,11 +460,11 @@
   transition: background 120ms ease, color 120ms ease;
 }
 .ce-play:hover {
-  background: #dfe9f2;
+  background: var(--ce-hover);
 }
 .ce-play.is-playing {
   background: var(--ce-accent);
-  color: #fff;
+  color: var(--ce-on-accent);
 }
 
 .ce-tl-actions {
@@ -437,14 +515,14 @@
 }
 /* the row stack — scrolls vertically when the rows don't fit. The 6px gutter
    is ALWAYS reserved (stable) so lane widths never jitter. Top margin clears
-   the axis overlay's focus-tick strip. */
+   the axis overlay's focus-tick strip (now 17px — keep in sync). */
 .ce-lanes {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 14px;
+  margin-top: 17px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
@@ -675,8 +753,11 @@
   top: 0;
   transform: translateX(-50%);
   font-family: var(--ce-font-mono);
-  font-size: 10px;
-  color: var(--ce-text-3);
+  font-size: 12px;
+  /* size stays a notch under the 13px row values — hierarchy by SIZE; but
+     text-3 (~3.2:1 in bw) failed the small-text bar, so contrast comes from
+     the same text-2 the values use */
+  color: var(--ce-text-2);
   /* ticks float ABOVE the brush — must not eat its drag hits */
   pointer-events: none;
 }
@@ -695,7 +776,7 @@
   height: 13px;
   line-height: 13px;
   background: var(--ce-accent);
-  color: #fff;
+  color: var(--ce-on-accent);
   font-family: var(--ce-font-mono);
   font-size: 9px;
   border-radius: 3px 3px 0 0;
@@ -796,6 +877,14 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+  /* permanent left inset for the label column. The selected band's left edge
+     sits on the column start, so this padding is the gap between the band's
+     corner and the name — with 0px the name was flush on the band's edge, and
+     pushing the BAND left instead (negative margin) pressed its 6px radius
+     against the panel's 12px padding and read as a square cut. All rows share
+     it, so the names stay mutually aligned; the column's own width is fixed by
+     --lane-label, so lanes and ruler never move. */
+  padding-left: 10px;
 }
 .ce-track-label {
   flex: 1;
@@ -814,15 +903,20 @@
 }
 .ce-track-name {
   max-width: 100%;
-  font-size: 11.5px;
-  font-weight: 500;
+  font-size: 13.5px;
+  /* 500 rendered as REGULAR for the CJK names on Windows (the stack falls
+     through Inter → no webfont → Microsoft YaHei, which ships 400/700 only,
+     so 500 matched down to 400). 600 matches UP to YaHei Bold there, and to
+     PingFang SC Semibold on macOS — the name is the row's index and carries
+     the weight, the mono value stays light. */
+  font-weight: 600;
   color: var(--ce-text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .ce-track-label:hover .ce-track-name {
-  color: var(--ce-text-1);
+  color: var(--ce-text);
 }
 .ce-track-label.is-solo .ce-track-name {
   color: var(--ce-accent);
@@ -830,9 +924,12 @@
 /* live attribute value at the playhead (GES-style row readout) */
 .ce-track-value {
   font-family: var(--ce-font-mono);
-  font-size: 9.5px;
-  line-height: 1;
-  color: var(--ce-text-3);
+  /* was 9.5px/text-3 — sub-10px mono at ~3:1 contrast was the least legible
+     text on the panel (worst in bw). One notch under the 13.5px row name,
+     text-2 clears 4.5:1 in BOTH themes (bw #a7acb4 ≈ 7:1). */
+  font-size: 13px;
+  line-height: 1.1;
+  color: var(--ce-text-2);
   white-space: nowrap;
 }
 /* insert-keyframe button — VISUAL ONLY for now. A hollow keyframe diamond
@@ -866,6 +963,21 @@
 .ce-kf-add:not(:disabled):hover .ce-kf-dot {
   background: currentColor;
 }
+/* the position trio rides ONE keyframe (lon+lat+height land together), so
+   hovering ANY of the three insert buttons lights ALL THREE — the hover must
+   read as one group action, not three independent ones. :has() keeps this
+   CSS-only (no React state, no re-render); the single-row groups (heading/
+   pitch/roll/fov) are already covered by the per-button :hover above. */
+.ce-lanes:has(.ce-kf-add[data-group='position']:hover)
+  .ce-kf-add[data-group='position']:not(:disabled) {
+  color: var(--ce-accent);
+  background: var(--ce-surface-2);
+}
+.ce-lanes:has(.ce-kf-add[data-group='position']:hover)
+  .ce-kf-add[data-group='position']:not(:disabled)
+  .ce-kf-dot {
+  background: currentColor;
+}
 /* channels without a data model (FOV) render disabled — quiet, inert */
 .ce-kf-add:disabled {
   opacity: 0.3;
@@ -883,7 +995,7 @@
   border: 0;
   border-radius: 4px;
   background: none;
-  color: var(--ce-text-3);
+  color: var(--ce-text-2);
   cursor: pointer;
 }
 .ce-kf-vals:hover,
@@ -900,7 +1012,10 @@
   bottom: 1px;
   transform: translateX(5px);
   font-family: var(--ce-font-mono);
-  font-size: 9px;
+  /* the lane's ONLY number. Was 9px — smaller than the 12px ruler it sits
+     under, and the one readout left out of the size pass. 11px = the
+     fine-tick size, one notch under the 13px row value. */
+  font-size: 11px;
   line-height: 1;
   color: var(--ce-text-2);
   white-space: nowrap;
@@ -908,7 +1023,10 @@
   border: 0;
   background: none;
   cursor: pointer;
-  text-shadow: 0 0 3px var(--ce-surface-1);
+  /* halo painted in the LANE's fill (--ce-surface-2). It used to name
+     --ce-surface-1, a token that has never existed, so the whole declaration
+     was dropped and the tags sat raw on the gridlines. */
+  text-shadow: 0 0 3px var(--ce-surface-2);
 }
 .ce-key-val:hover {
   color: var(--ce-accent);
@@ -919,9 +1037,9 @@
 /* inline editor that replaces the tag while editing */
 .ce-key-val.is-edit {
   width: 10ch;
-  color: var(--ce-text-1);
+  color: var(--ce-text);
   text-shadow: none;
-  background: var(--ce-surface-1);
+  background: var(--ce-surface);
   border: 1px solid var(--ce-accent);
   border-radius: 3px;
   cursor: text;
@@ -969,11 +1087,23 @@
 }
 /* selected row: the label cell is tinted and the name takes the accent.
    Background only — the label's padding/margins/text position are never
-   touched, so the list cannot re-flow. */
+   touched, so the list cannot re-flow. `align-self` stretches the band over
+   the ROW's full 24px height instead of hugging the 17px ◇ button (the grid
+   centres its items, so the cell was content-sized and the band read as a
+   cramped little pill); row height is flex/min-height driven, so the stretch
+   cannot push the rows above/below around. No outline: a 1px inset ring
+   around a band this small read as tight, not as "this row is chosen". */
 .ce-track.is-selected .ce-track-side {
-  border-radius: 5px;
+  align-self: stretch;
+  border-radius: 6px;
   background: color-mix(in srgb, var(--ce-accent) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ce-accent) 26%, transparent);
+  /* LEFT edge stays on the column start (12px off the panel's edge) so the 6px
+     corner has room to read as a corner; the name's inset inside the band is
+     the base rule's 10px padding-left. Only the RIGHT side overhangs — 8px of
+     inner inset for the ◇ bought by an equal negative margin, 2px short of the
+     lane column: the value, the buttons and the lanes keep their pixels. */
+  padding-right: 8px;
+  margin-right: -8px;
 }
 .ce-curve-grid {
   position: absolute;
@@ -992,10 +1122,13 @@
   left: 4px;
   transform: translateY(-50%);
   font-family: var(--ce-font-mono);
-  font-size: 9px;
+  /* one notch under the row value (13px) — the pane's data axis must not
+     out-shout the values it annotates; text-2 separates it from the 22%
+     gridlines it used to blend with */
+  font-size: 12.5px;
   font-style: normal;
   line-height: 1;
-  color: var(--ce-text-3);
+  color: var(--ce-text-2);
   text-shadow: 0 0 3px var(--ce-surface-2);
 }
 /* the sampled curve — non-scaling-stroke keeps it 1.5px at any zoom */
@@ -1008,13 +1141,13 @@
 }
 .ce-curve-line {
   fill: none;
-  stroke: #4c9a5a;
+  stroke: var(--ce-data);
   stroke-width: 1.5;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 .ce-ease-line {
-  stroke: color-mix(in srgb, #4c9a5a 55%, transparent);
+  stroke: color-mix(in srgb, var(--ce-data) 55%, transparent);
   stroke-width: 1;
   stroke-dasharray: 2 2;
 }
@@ -1025,16 +1158,16 @@
   height: 9px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border-color: #4c9a5a;
+  border-color: var(--ce-data);
   cursor: move;
 }
 .ce-key.is-curve-key:hover,
 .ce-key.is-curve-key.is-live {
-  background: #4c9a5a;
+  background: var(--ce-data);
 }
 .ce-key.is-curve-key.is-selected {
-  background: #4c9a5a;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #4c9a5a 45%, transparent);
+  background: var(--ce-data);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ce-data) 45%, transparent);
 }
 /* bezier control points (缓动手柄) */
 .ce-ease-h {
@@ -1044,12 +1177,12 @@
   transform: translate(-50%, -50%);
   border-radius: 2px;
   background: var(--ce-surface);
-  border: 1.5px solid #4c9a5a;
+  border: 1.5px solid var(--ce-data);
   cursor: move;
   z-index: 2;
 }
 .ce-ease-h:hover {
-  background: #4c9a5a;
+  background: var(--ce-data);
 }
 /* 缓动 context menu — hangs off the clicked key */
 .ce-ease-menu {
@@ -1062,7 +1195,7 @@
   padding: 4px;
   border: 1px solid var(--ce-border);
   border-radius: 6px;
-  background: var(--ce-surface-1);
+  background: var(--ce-surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
 }
 .ce-ease-head {
@@ -1086,11 +1219,11 @@
   cursor: pointer;
 }
 .ce-ease-item:hover {
-  color: var(--ce-text-1);
+  color: var(--ce-text);
   background: var(--ce-surface-2);
 }
 .ce-ease-item.is-on {
-  color: #4c9a5a;
+  color: var(--ce-data);
 }
 .ce-ease-item.is-quiet {
   color: var(--ce-text-3);
@@ -1108,6 +1241,11 @@
   min-height: 22px;
   border-radius: 5px;
   background: var(--ce-surface-2);
+  /* a hairline, not a fill bump: surface-2 sits only ONE step off the panel
+     in both themes, so stacked lanes read as one continuous slab. inset (not
+     border) so the box keeps its exact size — the clip-path below, the lane
+     column and the axis alignment are all untouched. */
+  box-shadow: inset 0 0 0 1px var(--ce-border);
   clip-path: inset(
     0 calc(-1 * var(--ce-lane-key-room)) 0 calc(-1 * var(--ce-lane-key-room))
   );
@@ -1233,7 +1371,9 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 14px;
+  /* 17px hosts the 11px labels (was 14px/9px) — .ce-lanes' margin-top is
+     sized to this strip, keep them in sync */
+  height: 17px;
   border-bottom: 1px solid var(--ce-border);
   /* EVERY label is centred on its tick — including the ones at 0% / 100%.
      The strip clips with a margin instead of a hard edge, so the end labels
@@ -1249,9 +1389,11 @@
   top: 1px;
   transform: translateX(-50%);
   font-family: var(--ce-font-mono);
-  font-size: 9px;
-  line-height: 12px;
-  color: var(--ce-text-3);
+  font-size: 11px;
+  line-height: 14px;
+  /* same treatment as the ruler above: size keeps it under the values,
+     text-2 clears 4.5:1 in both themes */
+  color: var(--ce-text-2);
   white-space: nowrap;
 }
 
@@ -1267,7 +1409,7 @@
   gap: 8px;
   height: 34px;
   padding: 0 12px 0 14px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--ce-chrome);
   backdrop-filter: blur(6px);
   border-radius: 999px;
   box-shadow: var(--ce-shadow-1);
@@ -1808,15 +1950,15 @@
   transition: background 120ms ease, color 120ms ease;
 }
 .ce-render-btn:hover {
-  background: #dfe9f2;
+  background: var(--ce-hover);
 }
 .ce-render-btn.is-rendering {
   background: var(--ce-accent);
-  color: #fff;
+  color: var(--ce-on-accent);
   cursor: pointer;
 }
 .ce-render-btn.is-error {
-  background: #f7ebe7;
+  background: var(--ce-danger-soft);
   color: var(--ce-danger);
 }
 .ce-render-label {
