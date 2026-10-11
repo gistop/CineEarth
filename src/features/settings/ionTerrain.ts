@@ -18,6 +18,7 @@ import {
   IonWorldImageryStyle,
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
+import { setImageryProvider } from '../../cesium/imagerySource'
 import { useIon } from './ionTokenStore'
 
 /** asset 2 = Cesium World Imagery (asset 1 = World Terrain); any asset endpoint
@@ -95,16 +96,16 @@ let imagerySeq = 0
 let lastImageryTokenKey = '\u0000' // sentinel — never equal to a real token key
 
 /**
- * Push store state → viewer imagery layer. Re-created whenever the active token
- * changes: ion derives a resource's credits (including Cesium's "default token"
- * notice) from the token in play when the resource is created, so a layer built
- * with the old token would keep that notice on screen forever.
- * The new layer is added on top of the current one before the old is dropped,
- * so the swap never flashes an empty globe.
+ * Push store state → the SHARED imagery source (see cesium/imagerySource).
+ * Re-created whenever the active token changes: ion derives a resource's
+ * credits (including Cesium's "default token" notice) from the token in play
+ * when the resource is created, so a layer built with the old token would
+ * keep that notice on screen forever.
+ * The provider goes through setImageryProvider(), which re-dials EVERY
+ * viewport (main globe + panes) — panes no longer capture a stale provider
+ * just because they were created before ion resolved.
  */
 export async function syncIonImagery(): Promise<void> {
-  const viewer = getViewer()
-  if (!viewer) return
   const tokenKey = resolveActiveToken()
   if (tokenKey === lastImageryTokenKey) return
 
@@ -112,10 +113,9 @@ export async function syncIonImagery(): Promise<void> {
   try {
     applyIonToken(tokenKey) // the layer must be requested with the active token
     const provider = await createWorldImageryAsync({ style: IonWorldImageryStyle.AERIAL })
-    if (seq !== imagerySeq || viewer.isDestroyed()) return // superseded / torn down
-    const layers = viewer.imageryLayers
-    layers.addImageryProvider(provider) // new layer on top…
-    while (layers.length > 1) layers.remove(layers.get(0)) // …then drop placeholder + old layer
+    if (seq !== imagerySeq) return // superseded by a newer sync
+    /* broadcast: viewports not yet created read it on construction */
+    setImageryProvider(provider)
     lastImageryTokenKey = tokenKey
   } catch (err) {
     console.error('[CineEarth] ion World Imagery failed — keeping the current imagery', err)

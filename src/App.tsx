@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import GlobeViewport from './components/GlobeViewport'
+import ViewportStage from './components/ViewportStage'
 import Drawer from './components/Drawer'
 import Timeline from './components/Timeline'
 import PreviewBadge from './components/PreviewBadge'
@@ -73,7 +73,7 @@ export default function App() {
       className="ce-app"
       style={{ '--ce-tl-h': timelineExpanded ? `${tlHeight}px` : 'var(--ce-tl-collapsed)' } as React.CSSProperties}
     >
-      <GlobeViewport />
+      <ViewportStage />
 
       {/* imperative bridge: playback loop + route entities (also active in preview) */}
       <RouteSceneBridge />

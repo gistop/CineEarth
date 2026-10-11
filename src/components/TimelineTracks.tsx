@@ -1,8 +1,16 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { useUI } from '../store/ui'
 import { TagIcon } from './Icons'
-import { useRoute } from '../features/route/routeStore'
-import { useReveal } from '../features/route/revealStore'
+import { useRoute, type Shot } from '../features/route/routeStore'
+import { useReveal, DEFAULT_REVEAL_KEYS } from '../features/route/revealStore'
 import {
   angleDeltaDeg,
   normalizeAngleDeg,
@@ -20,6 +28,7 @@ import {
   type EaseSpec,
   type InsertGroup,
   type Pose,
+  type Route,
   type Waypoint,
 } from '../features/route/types'
 import { PerspectiveFrustum } from 'cesium'
@@ -32,6 +41,7 @@ import {
   type ChannelKey,
 } from '../features/route/cameraChannels'
 import TimelineSettings from './TimelineSettings'
+import ShotTrack, { ShotAddRow } from './ShotTrack'
 import ValueBars from './ValueBars'
 import { laneValueAt } from './laneValue'
 
@@ -202,7 +212,8 @@ type BrushDrag =
  *  drag the brush to pan, drag its end handles to zoom, brush empty space to
  *  select a new window, plain-click to move the playhead, dbl-click to reset. */
 export function TimelineRuler({ view }: { view?: TlView }) {
-  const route = useRoute((s) => s.route)
+  const liveRoute = useRoute((s) => s.route)
+  const shots = useRoute((s) => s.shots)
   const progress = useRoute((s) => s.progress)
   const setProgress = useRoute((s) => s.setProgress)
   const setScrubbing = useUI((s) => s.setScrubbing)
@@ -215,15 +226,20 @@ export function TimelineRuler({ view }: { view?: TlView }) {
   /* active brush gesture (expanded only) */
   const brushRef = useRef<BrushDrag | null>(null)
 
-  /* the TIMELINE domain (settings 长度) — authoritative, not the content end */
-  const DURATION = timelineDuration(route)
+  /* the TIMELINE domain (settings 长度) — authoritative, not the content end.
+     No active shot → fall back to the FIRST 机位 so this ruler shares ONE basis
+     with the tracks grid (a 0 domain pinned the playhead at 0 AND collapsed the
+     scrub math — timeAt() would always return 0). */
+  const route = liveRoute ?? shots[0]?.route
+  const DURATION = route ? timelineDuration(route) : 0
+  const fps = route?.fps ?? 30
   /* focus–context: ALWAYS the full-overview mapping — the window is drawn
    *  as the brush overlay, the ruler itself never re-scales */
-  const pct = (tSec: number) => (tSec / DURATION) * 100
+  const pct = (tSec: number) => (tSec / (DURATION || 1)) * 100
   const ticks = buildTicks(DURATION)
   /* the playhead flag itself carries the seconds readout; frame number
    *  feeds the a11y slider text */
-  const frame = Math.floor(progress * DURATION * route.fps)
+  const frame = Math.floor(progress * DURATION * fps)
   const phLeft = pct(progress * DURATION)
 
   /* view/duration via refs for the native wheel handler (stale-closure guard) */
@@ -316,7 +332,7 @@ export function TimelineRuler({ view }: { view?: TlView }) {
         if (b && view && e.buttons === 1) {
           const el = e.currentTarget
           if (b.kind === 'scrub') {
-            setProgress(timeAt(e.clientX, el) / DURATION)
+            setProgress(timeAt(e.clientX, el) / (DURATION || 1))
           } else if (b.kind === 'pan') {
             const dt = ((e.clientX - b.x0) / el.getBoundingClientRect().width) * DURATION
             setTlView(clampView({ start: b.start0 + dt, span: view.span }, DURATION))
@@ -344,7 +360,7 @@ export function TimelineRuler({ view }: { view?: TlView }) {
         brushRef.current = null
         setScrubbing(false)
         /* bare click on empty overview = park the playhead there */
-        if (b?.kind === 'new' && !b.moved) setProgress(timeAt(e.clientX, e.currentTarget) / DURATION)
+        if (b?.kind === 'new' && !b.moved) setProgress(timeAt(e.clientX, e.currentTarget) / (DURATION || 1))
       }}
       onPointerCancel={() => {
         brushRef.current = null
@@ -357,7 +373,7 @@ export function TimelineRuler({ view }: { view?: TlView }) {
       }}
       onKeyDown={(e) => {
         /* step: one frame in frame unit, else 0.5 s per keypress */
-        const step = (tlUnit === 'frame' ? 1 / route.fps : 0.5) / DURATION
+        const step = (tlUnit === 'frame' ? 1 / fps : 0.5) / (DURATION || 1)
         if (e.key === 'ArrowLeft') setProgress(progress - step)
         else if (e.key === 'ArrowRight') setProgress(progress + step)
         else if (e.key === 'Home') setProgress(0)
@@ -389,14 +405,14 @@ export function TimelineRuler({ view }: { view?: TlView }) {
           className={`ce-ruler-tick${s === 0 ? ' is-zero' : ''}`}
           style={{ left: `${pct(s)}%` }}
         >
-          {formatTick(s, tlUnit, route.fps)}
+          {formatTick(s, tlUnit, fps)}
         </span>
       ))}
       {/* GES-style playhead handle — wide head carries the time readout
           (seconds, or the frame number in frame unit), small pointer
           underneath marks the exact time. Draggable as before. */}
       <span className="ce-ruler-ph" style={{ left: `${phLeft}%` }} aria-hidden="true">
-        {tlUnit === 'frame' ? Math.round(progress * DURATION * route.fps) : (progress * DURATION).toFixed(1)}
+        {tlUnit === 'frame' ? Math.round(progress * DURATION * fps) : (progress * DURATION).toFixed(1)}
       </span>
     </div>
   )
@@ -478,12 +494,47 @@ export default function TimelineTracks() {
   const [solo, setSolo] = useState<TrackId | null>(null)
   const toggleSolo = (id: TrackId) => setSolo((cur) => (cur === id ? null : id))
 
+  /* ----- 机位 accordion — MULTI-expand --------------------------------------
+     Expansion is a pure VIEW concern, per shot, fully decoupled from the
+     editing semantics (activeShotId): any number of shots may be expanded at
+     once — DAW-style vertical stacking — and switching the active shot never
+     touches anyone's expansion. Editing stays single-shot: only the ACTIVE
+     shot's rows accept gestures (its actions write through the active route);
+     the other shots' rows render read-only — see ChannelTrack's readOnly. */
+  const [expandedShotIds, setExpandedShotIds] = useState<ReadonlySet<string>>(() => {
+    const id = useRoute.getState().activeShotId
+    return new Set(id ? [id] : [])
+  })
+  const toggleShot = (id: string) => {
+    if (id !== activeShotId) useRoute.getState().setActiveShot(id)
+    /* collapsing the shot that owns curve mode leaves curve mode — its rows
+       unmount, a solo pointing into them would blank the lane column */
+    if (id === activeShotId && expandedShotIds.has(id) && solo) setSolo(null)
+    setExpandedShotIds((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   /** unified key selection (wp:<i> | gr:<id>) shared by every track */
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [marquee, setMarquee] = useState<Marquee | null>(null)
 
-  const route = useRoute((s) => s.route)
+  const liveRoute = useRoute((s) => s.route)
   const progress = useRoute((s) => s.progress)
+  const shots = useRoute((s) => s.shots)
+  const activeShotId = useRoute((s) => s.activeShotId)
+  /* a deleted shot must leave the expansion set (same hygiene as the store's
+     focus set) — compare first so an unchanged set doesn't re-render */
+  useEffect(() => {
+    setExpandedShotIds((cur) => {
+      const live = new Set(shots.map((s) => s.id))
+      const next = new Set([...cur].filter((id) => live.has(id)))
+      return next.size === cur.size ? cur : next
+    })
+  }, [shots])
   const updateWaypoint = useRoute((s) => s.updateWaypoint)
   const removeWaypoint = useRoute((s) => s.removeWaypoint)
   const insertKeyframe = useRoute((s) => s.insertKeyframeAtPlayhead)
@@ -499,14 +550,26 @@ export default function TimelineTracks() {
 
   const growthLine = useReveal((s) => s.growthLine)
   const revealKeys = useReveal((s) => s.keys)
+  /* per-shot growth curves — multi-expand renders ANY shot's reveal lane,
+     while `keys` above (the active shot's) keeps feeding the edit gestures */
+  const revealByShot = useReveal((s) => s.byShot)
   const addRevealKey = useReveal((s) => s.addKey)
   const moveRevealKey = useReveal((s) => s.moveKey)
   const removeRevealKey = useReveal((s) => s.removeKey)
+
+  /* no edit target → the ruler falls back to the first 机位 (there is always
+     at least one) so the timeline stays measurable; nothing else depends on
+     the fallback beyond the shared ruler/scale */
+  const route = liveRoute ?? shots[0]?.route
+  if (!route) return null // unreachable in practice; satisfies the type system
 
   /* TIMELINE domain (settings 长度) vs CONTENT end: camera keys live at their
    *  absolute seconds inside the content, everything is drawn in timeline
    *  seconds. Equal whenever 长度 == content length (the common case). */
   const DURATION = timelineDuration(route)
+  /* shot header blocks are sized against the LONGEST shot — a length
+     comparison between 机位, not a storyboard (see ShotTrack.tsx) */
+  const maxShotDur = Math.max(0.1, ...shots.map((sh) => timelineDuration(sh.route)))
   const content = totalDuration(route)
   /* effective viewport — clamped on read so route edits (duration changes)
    * can never leave a stale out-of-range window */
@@ -515,10 +578,6 @@ export default function TimelineTracks() {
   /** seconds → lane percent under the current window */
   const pct = (tSec: number) => ((tSec - viewStart) / viewSpan) * 100
   const channels = cameraChannelKeys(route)
-  /* channel readouts follow the playhead pose — through the timeline mapping,
-     so a longer timeline holds the final pose instead of stretching it */
-  const pose = samplePose(route, timelineProgressToRoute(route, progress))
-  const sortedRevealKeys = [...revealKeys].sort((a, b) => a.t - b.t)
 
   /* ----- GES solo curve editor ------------------------------------------
      Solo on an ATTRIBUTE row turns that lane into a value-mapped curve: the
@@ -650,7 +709,11 @@ export default function TimelineTracks() {
       useRoute.subscribe((s) => {
         const { playing, scrubbing, tlView: v } = useUI.getState()
         if (!playing || scrubbing) return
-        const dur = timelineDuration(s.route)
+        /* pan against the SAME domain the ruler/tracks draw with (active shot,
+           else the first 机位) so auto-follow never fights the shared basis */
+        const r = s.route ?? s.shots[0]?.route
+        if (!r) return
+        const dur = timelineDuration(r)
         const span = Math.min(Math.max(v.span, MIN_VIEW), dur)
         if (span >= dur) return // fit-all — nothing to pan
         const t = s.progress * dur
@@ -829,8 +892,10 @@ export default function TimelineTracks() {
       return
     }
 
-    /* form controls (settings column) own their clicks — no marquee there */
-    if ((e.target as HTMLElement).closest('button, input, select, .ce-tl-settings')) return
+    /* form controls (settings column) & shot rows own their clicks — no
+       marquee there (setPointerCapture below would re-target their click
+       events to the root and swallow the shot header/add-row handlers) */
+    if ((e.target as HTMLElement).closest('button, input, select, .ce-tl-settings, .ce-shot')) return
     // empty area → marquee (4px threshold keeps plain clicks / dblclick intact)
     marqueeStartRef.current = { x: e.clientX, y: e.clientY, moved: false }
     setMarquee({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY })
@@ -1187,6 +1252,174 @@ export default function TimelineTracks() {
   const marqueeBox = marquee && marqueeRect(marquee)
   const rootRect = rootRef.current?.getBoundingClientRect()
 
+  /* ----- 主输出 (program) — the edit-decision track ------------------------
+     Which 机位 is on the program from which moment. Boundaries drop
+     automatically: activating a shot IS the director's cut (the store does
+     it inside setActiveShot). This lane adds the REFINE gestures only:
+     drag a boundary = re-time the switch; click one (no drag) = delete it
+     (the segments merge). */
+  const program = useRoute((s) => s.program)
+  const moveProgramCut = useRoute((s) => s.moveProgramCut)
+  const removeProgramCut = useRoute((s) => s.removeProgramCut)
+  const shotName = (id: string) => shots.find((sh) => sh.id === id)?.name ?? '？'
+  const progLaneRef = useRef<HTMLDivElement>(null)
+  const progDragRef = useRef<{ i: number; startX: number; moved: boolean } | null>(null)
+
+  /** contiguous segments: [0..first cut) is an un-编排 gap, each cut holds
+   *  until the next; the last holds to the end */
+  const progSegs: { t0: number; t1: number; shotId: string | null }[] = (() => {
+    if (program.length === 0) return [{ t0: 0, t1: 1, shotId: null }]
+    const segs: { t0: number; t1: number; shotId: string | null }[] =
+      program[0].t > 1e-4 ? [{ t0: 0, t1: program[0].t, shotId: null }] : []
+    program.forEach((c, i) =>
+      segs.push({
+        t0: c.t,
+        t1: i + 1 < program.length ? program[i + 1].t : 1,
+        shotId: c.shotId,
+      }),
+    )
+    return segs
+  })()
+  /* the segment on air at the playhead (playhead exactly on the last
+     boundary still highlights the last segment) */
+  const progLive = (() => {
+    const i = progSegs.findIndex(
+      (sg) => progress >= sg.t0 - 1e-6 && progress < sg.t1 - 1e-6,
+    )
+    return i === -1 ? progSegs.length - 1 : i
+  })()
+
+  const onProgDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = (e.target as HTMLElement).closest<HTMLElement>('.ce-program-cut')
+    if (!handle) return
+    /* keep the container's marquee/key gestures out of this one */
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    progDragRef.current = { i: Number(handle.dataset.cut), startX: e.clientX, moved: false }
+  }
+  const onProgMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = progDragRef.current
+    if (!d) return
+    /* a plain click never re-times anything (3px dead zone) */
+    if (!d.moved && Math.abs(e.clientX - d.startX) < 3) return
+    d.moved = true
+    const lane = progLaneRef.current
+    if (!lane) return
+    const r = lane.getBoundingClientRect()
+    const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+    /* lane px → view seconds → playhead fraction (the cuts' domain) */
+    moveProgramCut(d.i, (viewStart + ratio * viewSpan) / DURATION)
+  }
+  const onProgUp = () => {
+    const d = progDragRef.current
+    progDragRef.current = null
+    if (d && !d.moved) removeProgramCut(d.i)
+  }
+
+  /** one expanded shot's channel rows. The ACTIVE shot's rows are live —
+      solo/insert/ease/marquee gestures all write through the ACTIVE route;
+      any OTHER expanded shot renders the SAME rows read-only: full visual
+      parity for cross-机位 comparison (duration, keys, growth), zero editing
+      ambiguity. Every per-shot quantity (pose, channels, content length,
+      growth keys, timeline length) is derived from THAT shot's route, never
+      the global active one. */
+  const renderChannelRows = (shot: Shot, editable: boolean) => {
+    const r = shot.route
+    const shotPose = samplePose(r, timelineProgressToRoute(r, progress))
+    const shotChannels = cameraChannelKeys(r)
+    const shotContent = totalDuration(r)
+    const shotDur = timelineDuration(r)
+    const shotReveal = [...(revealByShot[shot.id] ?? DEFAULT_REVEAL_KEYS)].sort((a, b) => a.t - b.t)
+    return (
+      <>
+        {/* every row is ALWAYS rendered — the label column is the stable list,
+            the lanes area is what changes with the selection */}
+        {CHANNEL_ROWS.map((row) => (
+          <ChannelTrack
+            key={row.id}
+            id={row.id}
+            label={row.label}
+            value={shotPose ? formatChannelValue(row.id, shotPose[row.id]) : undefined}
+            solo={editable ? solo : null}
+            onToggle={editable ? toggleSolo : undefined}
+            selected={selected}
+            keys={keySpans(shotChannels[row.id], row.id, shotContent, pct)}
+            onInsert={editable ? () => insertFromCamera(row.group) : undefined}
+            group={row.group}
+            curve={editable && curveId === row.id}
+            range={range}
+            onKeyMenu={editable ? openKeyMenu : undefined}
+            data={r}
+            readOnly={!editable}
+          />
+        ))}
+
+        {/* growth line — dbl-click lane adds a key, dbl-click a key removes it.
+            Selection & dragging are handled by the container (see
+            onRootPointerDown). Growth has no detail pane, so its label is a
+            plain read-only label (selecting it would blank every lane). */}
+        <div className={`ce-track${editable ? '' : ' is-readonly'}`}>
+          <div className="ce-track-side">
+            <SoloLabel
+              id="growth"
+              label="Growth"
+              value={growthLine ? 'on' : undefined}
+            />
+            {editable && (
+              <InsertKeyBtn
+                label="Growth"
+                onInsert={() => {
+                  /* a key already sits at the playhead → nothing to add */
+                  if (revealKeys.some((k) => Math.abs(k.t - progress) < 0.005)) return
+                  addRevealKey(progress)
+                }}
+              />
+            )}
+          </div>
+          <div
+            className="ce-track-lane ce-reveal-lane"
+            title={editable ? 'Growth % · dbl-click: add key · drag: time / % · dbl-click key: delete' : undefined}
+            onDoubleClick={
+              editable
+                ? (e) => {
+                    if ((e.target as HTMLElement).closest('.ce-reveal-key')) return
+                    const r2 = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                    const ratio = Math.min(1, Math.max(0, (e.clientX - r2.left) / r2.width))
+                    /* px → fraction-of-total goes through the view window */
+                    addRevealKey(Math.min(1, Math.max(0, (viewStart + ratio * viewSpan) / shotDur)))
+                  }
+                : undefined
+            }
+          >
+            <svg className="ce-reveal-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <polyline
+                points={shotReveal.map((k) => `${pct(k.t * shotDur)},${100 - k.value}`).join(' ')}
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+            {shotReveal.map((k) => (
+              <span
+                key={k.id}
+                data-key={`gr:${k.id}`}
+                className={`ce-key ce-reveal-key${selected.has(`gr:${k.id}`) ? ' is-selected' : ''}`}
+                style={{ left: `${pct(k.t * shotDur)}%` }}
+                title={`${Math.round(k.value)}% @ ${(k.t * shotDur).toFixed(1)}s`}
+                onDoubleClick={
+                  editable
+                    ? (e) => {
+                        e.stopPropagation()
+                        removeRevealKey(k.id)
+                      }
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        </div>
+      </>
+    )
+  }
+
   return (
     <div
       ref={rootRef}
@@ -1204,78 +1437,83 @@ export default function TimelineTracks() {
           the lanes grid aligns to its measured edges via --ce-tl-axis-l/r. */}
       {/* lanes scroll vertically when the rows don't fit */}
       <div className={`ce-lanes${curveId ? ' is-detail' : ''}`} ref={lanesRef}>
-      {/* every row is ALWAYS rendered — the label column is the stable list,
-          the lanes area is what changes with the selection */}
-      {CHANNEL_ROWS.map((row) => (
-        <ChannelTrack
-          key={row.id}
-          id={row.id}
-          label={row.label}
-          value={pose ? formatChannelValue(row.id, pose[row.id]) : undefined}
-          solo={solo}
-          onToggle={toggleSolo}
-          selected={selected}
-          keys={keySpans(channels[row.id], row.id, content, pct)}
-          onInsert={() => insertFromCamera(row.group)}
-          group={row.group}
-          curve={curveId === row.id}
-          range={range}
-          onKeyMenu={openKeyMenu}
-        />
-      ))}
-
-      {/* growth line — dbl-click lane adds a key, dbl-click a key removes it.
-          Selection & dragging are handled by the container (see onRootPointerDown). */}
-      {/* Growth has no detail pane, so its label is a plain read-only label
-          (selecting it would blank every lane and show nothing). */}
-        <div className="ce-track">
-          <div className="ce-track-side">
-            <SoloLabel
-              id="growth"
-              label="Growth"
-              value={growthLine ? 'on' : undefined}
-            />
-            <InsertKeyBtn
-              label="Growth"
-              onInsert={() => {
-                /* a key already sits at the playhead → nothing to add */
-                if (revealKeys.some((k) => Math.abs(k.t - progress) < 0.005)) return
-                addRevealKey(progress)
-              }}
-            />
-          </div>
+      {/* 主输出 (program) — the edit-decision track. Activating a 机位
+          anywhere drops its boundary at the playhead (导播式：切换即剪辑);
+          this lane adds the refine gestures: drag a boundary = re-time the
+          switch, click one = delete it (segments merge). */}
+      <div className="ce-track ce-program">
+        <div className="ce-track-side">
           <div
-            className="ce-track-lane ce-reveal-lane"
-            title="Growth % · dbl-click: add key · drag: time / % · dbl-click key: delete"
-            onDoubleClick={(e) => {
-              if ((e.target as HTMLElement).closest('.ce-reveal-key')) return
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-              const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
-              /* px → fraction-of-total goes through the view window */
-              addRevealKey(Math.min(1, Math.max(0, (viewStart + ratio * viewSpan) / DURATION)))
-            }}
+            className="ce-track-label"
+            title="主输出编排 — 单击任意机位即在播放头落下剪辑点；拖动边界精修切换时间，单击边界删除（两段合并）"
           >
-            <svg className="ce-reveal-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-              <polyline
-                points={sortedRevealKeys.map((k) => `${pct(k.t * DURATION)},${100 - k.value}`).join(' ')}
-                vectorEffect="non-scaling-stroke"
-              />
-            </svg>
-            {sortedRevealKeys.map((k) => (
-              <span
-                key={k.id}
-                data-key={`gr:${k.id}`}
-                className={`ce-key ce-reveal-key${selected.has(`gr:${k.id}`) ? ' is-selected' : ''}`}
-                style={{ left: `${pct(k.t * DURATION)}%` }}
-                title={`${Math.round(k.value)}% @ ${(k.t * DURATION).toFixed(1)}s`}
-                onDoubleClick={(e) => {
-                  e.stopPropagation()
-                  removeRevealKey(k.id)
-                }}
-              />
-            ))}
+            <span className="ce-track-name">主输出</span>
+            <span className="ce-track-value">
+              {program.length ? `${program.length} 次切换` : '未编排'}
+            </span>
           </div>
         </div>
+        <div
+          className="ce-track-lane ce-program-lane"
+          ref={progLaneRef}
+          onPointerDown={onProgDown}
+          onPointerMove={onProgMove}
+          onPointerUp={onProgUp}
+          onPointerCancel={onProgUp}
+        >
+          {progSegs.map((seg, i) => (
+            <div
+              key={`${seg.t0}-${seg.shotId ?? 'gap'}`}
+              className={`ce-program-seg${seg.shotId ? '' : ' is-gap'}${
+                i === progLive ? ' is-live' : ''
+              }`}
+              style={{
+                left: `${pct(seg.t0 * DURATION)}%`,
+                width: `${Math.max(0, pct(seg.t1 * DURATION) - pct(seg.t0 * DURATION))}%`,
+              }}
+            >
+              {seg.shotId ? shotName(seg.shotId) : '未编排'}
+            </div>
+          ))}
+          {program.map((c, i) => (
+            <span
+              key={`${c.t}-${c.shotId}`}
+              className="ce-program-cut"
+              data-cut={i}
+              style={{ left: `${pct(c.t * DURATION)}%` }}
+              title={`${shotName(c.shotId)} @ ${(c.t * DURATION).toFixed(1)}s — 拖动改切换时间 · 单击删除`}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* 机位 accordion — one header per shot; the ACTIVE shot's channel rows
+          (7 attributes + Growth) render below its header while EXPANDED
+          (clicking the active header collapses it → pure storyboard view).
+          Headers share the row grid, so the stack stays ruler-aligned. */}
+      {shots.map((shot) => (
+        <Fragment key={shot.id}>
+          <ShotTrack
+            shot={shot}
+            active={shot.id === activeShotId}
+            expanded={expandedShotIds.has(shot.id)}
+            maxDur={maxShotDur}
+            onToggle={() => toggleShot(shot.id)}
+          />
+          {expandedShotIds.has(shot.id) &&
+            renderChannelRows(shot, shot.id === activeShotId)}
+        </Fragment>
+      ))}
+      <ShotAddRow
+        onAdd={() => {
+          /* a fresh shot starts EXPANDED and ACTIVE (creating something you
+             then can't see would read as a no-op); other shots keep their own
+             expansion — adding never folds anyone */
+          useRoute.getState().addShot()
+          const id = useRoute.getState().activeShotId
+          if (id) setExpandedShotIds((cur) => (cur.has(id) ? cur : new Set(cur).add(id)))
+        }}
+      />
 
       </div>
 
@@ -1428,7 +1666,12 @@ function InsertKeyBtn({
   )
 }
 
-/** a simple channel row: solo label + kf button + lane of selectable keys */
+/** a simple channel row: solo label + kf button + lane of selectable keys.
+ *  MULTI-EXPAND: rows render for ANY expanded shot, not just the active one.
+ *  `data` re-targets the row at that shot's route (playhead mapping, fps,
+ *  live-tolerance); rows of a NON-active shot render read-only — the editing
+ *  toolchain (insert/drag/ease/menus) all write through the ACTIVE shot's
+ *  actions, so a non-active row must never accept a gesture. */
 function ChannelTrack({
   id,
   label,
@@ -1442,12 +1685,15 @@ function ChannelTrack({
   curve,
   range,
   onKeyMenu,
+  data,
+  readOnly,
 }: {
   id: TrackId
   label: string
   value?: string
   solo: TrackId | null
-  onToggle: (id: TrackId) => void
+  /** absent on read-only rows — the label then renders as plain text */
+  onToggle?: (id: TrackId) => void
   selected: Set<string>
   keys: KeySpan[]
   onInsert?: () => void
@@ -1461,11 +1707,16 @@ function ChannelTrack({
   /** right-click a key → 缓动 menu (owned by the parent, which can escape
    *  the lane's clip-path) */
   onKeyMenu?: (wp: number, ch: ChannelId, x: number, y: number) => void
+  /** per-shot data source — REQUIRED: every row re-targets at this shot's own
+   *  route (playhead mapping, fps, live-tolerance), never the global active */
+  data: Route
+  /** non-active expanded shot: render its keys, refuse all interaction */
+  readOnly?: boolean
 }) {
   /* playhead read — the whole grid re-renders on every progress tick already
      (the parent subscribes), so this costs no extra renders */
   const progress = useRoute((s) => s.progress)
-  const route = useRoute((s) => s.route)
+  const route = data
   const tlView = useUI((s) => s.tlView)
   /* keyframe value tags — PER-CHANNEL toggle (default off): each row's
      button controls only its own lane */
@@ -1674,7 +1925,7 @@ function ChannelTrack({
     <div
       className={`ce-track${showCurve ? ' is-curve' : ''}${
         solo === id ? ' is-selected' : ''
-      }`}
+      }${readOnly ? ' is-readonly' : ''}`}
     >
       <div className="ce-track-side">
         <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />

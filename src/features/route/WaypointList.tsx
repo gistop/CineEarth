@@ -6,7 +6,7 @@ const fmtDeg = (v: number, positive: string, negative: string) =>
   `${Math.abs(v).toFixed(2)}°${v >= 0 ? positive : negative}`
 
 export default function WaypointList() {
-  const waypoints = useRoute((s) => s.route.waypoints)
+  const waypoints = useRoute((s) => s.route?.waypoints ?? [])
   const selectedId = useRoute((s) => s.selectedWaypointId)
   const select = useRoute((s) => s.selectWaypoint)
 

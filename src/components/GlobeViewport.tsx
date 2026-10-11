@@ -2,16 +2,17 @@ import { useEffect, useRef } from 'react'
 import {
   Viewer,
   ImageryLayer,
-  OpenStreetMapImageryProvider,
   Cartographic,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
-  Cartesian3,
   defined,
 } from 'cesium'
 import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
+import { useExport } from '../features/export/exportStore'
+import { applyFraming, currentCameraAsFreeCam, sameFraming } from '../features/route/framing'
 import { setViewer } from '../cesium/viewerRegistry'
+import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
 import { bootstrapIonSettings } from '../features/settings/ionTerrain'
 import { syncSceneSettings } from '../features/settings/sceneSettings'
 
@@ -32,9 +33,10 @@ export default function GlobeViewport() {
     let viewer: Viewer | undefined
     try {
       viewer = new Viewer(host, {
-        baseLayer: new ImageryLayer(
-          new OpenStreetMapImageryProvider({ url: 'https://tile.openstreetmap.org/' }),
-        ),
+        /* the SHARED source (OSM placeholder until ion AERIAL resolves) —
+           every viewport reads the same instance, so a pane created before
+           ion lands still ends up on the same imagery as this globe */
+        baseLayer: new ImageryLayer(getImageryProvider()),
         baseLayerPicker: false,
         geocoder: false,
         homeButton: false,
@@ -49,13 +51,38 @@ export default function GlobeViewport() {
       })
       setViewer(viewer)
 
+      /* imagery swaps (placeholder → ion AERIAL, or a token change) re-dial
+         THIS globe through the shared source — same instance the panes use */
+      const unsubImagery = bindImagery(viewer)
+
       /* scene render switches (depth test, atmosphere, fog) — store → viewer */
       syncSceneSettings()
 
-      /* Matterhorn opening view — framed on the demo fly-around (Swiss–Italian Alps) */
-      viewer.camera.setView({
-        destination: Cartesian3.fromDegrees(7.6586, 45.9763, 60_000),
-      })
+      /* Matterhorn opening view — framed on the demo fly-around (Swiss–Italian
+         Alps). Same framing rule every viewport uses (see framing.ts). */
+      applyFraming(viewer, null)
+
+      /* framing memory: whenever the user FINISHES moving the camera, the
+         final framing is recorded onto the ACTIVE shot — switching 机位 away
+         and back therefore returns to the exact view, instead of the old bug
+         where the (single, shared) camera state silently drifted to
+         whichever shot was active last. Skipped while the playhead or the
+         offline renderer owns the camera (those framings belong to the route,
+         not to free navigation), and while the camera is locked (viewpoint
+         held on purpose). */
+      const onMoveEnd = () => {
+        if (!viewer) return
+        if (useExport.getState().status === 'rendering') return
+        const ui = useUI.getState()
+        if (ui.playing || ui.scrubbing || ui.cameraLocked) return
+        const r = useRoute.getState()
+        const cam = currentCameraAsFreeCam(viewer)
+        if (r.activeShotId == null) return
+        const shot = r.shots.find((sh) => sh.id === r.activeShotId)
+        if (!shot || sameFraming(shot.freeCam, cam)) return
+        r.setFreeCam(r.activeShotId, cam)
+      }
+      viewer.camera.moveEnd.addEventListener(onMoveEnd)
 
       /* ion bridge: stored token → terrain → imagery. All three live in
          ionTerrain.ts so that changing the token rebuilds both the terrain
@@ -94,6 +121,8 @@ export default function GlobeViewport() {
       }, ScreenSpaceEventType.LEFT_CLICK)
 
       return () => {
+        unsubImagery()
+        viewer?.camera.moveEnd.removeEventListener(onMoveEnd)
         handler.destroy()
         setViewer(null)
         viewer?.destroy()

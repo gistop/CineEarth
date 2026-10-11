@@ -39,6 +39,9 @@ export default function TimelineSettings() {
   const [w, setW] = useState(1920)
   const [h, setH] = useState(1080)
 
+  /* no shot being edited → the project settings column has nothing to edit */
+  if (!route) return null
+
   const fps = route.fps
   const len = timelineDuration(route)
   const content = totalDuration(route)

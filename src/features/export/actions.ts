@@ -1,11 +1,13 @@
 // Export actions — glue between UI buttons, the viewer registry and the recorder.
 
-import { Cartesian3, Math as CesiumMath, PerspectiveFrustum } from 'cesium'
-import { getViewer } from '../../cesium/viewerRegistry'
+import { Cartesian3, Math as CesiumMath, PerspectiveFrustum, type Entity, type Viewer } from 'cesium'
+import { getProgramViewer, getViewer, refreshProgramViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
 import { samplePose, timelineDuration, timelineProgressToRoute } from '../route/pathMath'
-import { useRoute } from '../route/routeStore'
+import { programShotAt, useRoute } from '../route/routeStore'
 import { hasPosition, type Pose } from '../route/types'
+import { applyFraming, frameOf } from '../route/framing'
+import { buildShotRouteEntities } from '../route/routeEntities'
 import { useExport } from './exportStore'
 import { createStamp, downloadBlob, recordVideo, type RecordPath } from './recorder'
 
@@ -35,18 +37,130 @@ export function takeScreenshot(): void {
   }, 'image/png')
 }
 
-/** Offline video render of the current route. */
+/** Render video = render the PROGRAM OUT picture (the cut-together 成片), not
+ *  the single edited shot. With ≥2 机位 we record the Program Out monitor's
+ *  own Viewer frame-by-frame; with a single 机位 the program IS that shot, so
+ *  we fall back to the interactive main globe (the only Viewer then). */
 export async function renderRouteVideo(): Promise<void> {
-  const viewer = getViewer()
-  if (!viewer) return
-
   const store = useExport.getState()
   if (store.status === 'rendering') {
     store.cancel()
     return
   }
 
-  const { route } = useRoute.getState()
+  const programViewer = getProgramViewer()
+  if (programViewer && !programViewer.isDestroyed() && useRoute.getState().shots.length > 1) {
+    await renderProgramVideo(programViewer)
+    return
+  }
+  await renderSingleShotVideo()
+}
+
+/** the cut-together picture: cross cuts re-target entities AND camera inside
+ *  the Program Out Viewer. The exporter OWNS this Viewer for the render — the
+ *  monitor's own throttled auto-follow is paused for the duration. */
+async function renderProgramVideo(viewer: Viewer): Promise<void> {
+  const s = useRoute.getState()
+  const route = s.route ?? s.shots[0]?.route
+  if (!route) {
+    useExport.getState().finish('没有可用的机位航线')
+    return
+  }
+  if (s.program.length === 0) {
+    useExport.getState().finish('主输出尚未编排 — 先在时间轴编排切镜')
+    return
+  }
+
+  useExport.getState().start()
+  useUI.getState().setPlaying(false)
+  const controller = viewer.scene.screenSpaceCameraController
+  const inputsWereEnabled = controller.enableInputs
+  controller.enableInputs = false
+
+  const originalProgress = s.progress
+  let entities: Entity[] = []
+  let onAirId: string | null = null
+
+  const syncFrame = (progress: number) => {
+    const st = useRoute.getState()
+    const sid = programShotAt(st.program, progress)
+    if (sid !== onAirId) {
+      entities.forEach((e) => viewer.entities.remove(e))
+      entities = []
+      onAirId = sid
+      if (sid) {
+        const shot = st.shots.find((sh) => sh.id === sid)
+        if (shot) entities = buildShotRouteEntities(viewer, shot)
+      }
+    }
+    if (sid) {
+      const shot = st.shots.find((sh) => sh.id === sid)
+      if (shot) applyFraming(viewer, frameOf(shot, progress))
+    }
+    useRoute.getState().setProgress(progress)
+  }
+
+  try {
+    const path: RecordPath = {
+      begin: () => {
+        /* drop the monitor's live entities — the exporter rebuilds them per
+           cut, so the two never draw the same decoration twice */
+        viewer.entities.removeAll()
+        entities = []
+        onAirId = null
+        syncFrame(0)
+      },
+      applyProgress: (progress) => syncFrame(progress),
+      frameCount: Math.max(2, Math.round(timelineDuration(route) * route.fps)),
+      fps: route.fps,
+    }
+
+    const blob = await recordVideo({
+      canvas: viewer.canvas,
+      path,
+      waitTilesLoaded: async () => {
+        const deadline = performance.now() + 8000 // never hang on missing tiles
+        while (!viewer.scene.globe.tilesLoaded && performance.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 120))
+        }
+      },
+      renderFrame: () => viewer.scene.render(),
+      onProgress: (frame, total) => useExport.getState().setProgress(frame / total),
+      isCancelled: () => useExport.getState().cancelRequested,
+    })
+
+    downloadBlob(blob, `cineearth-${createStamp()}.mp4`)
+    useExport.getState().finish()
+  } catch (err) {
+    const message = err instanceof DOMException && err.name === 'AbortError'
+      ? null // user cancel — not an error worth surfacing
+      : err instanceof Error ? err.message : String(err)
+    useExport.getState().finish(message ?? undefined)
+  } finally {
+    controller.enableInputs = inputsWereEnabled
+    /* hand the Viewer back: clear the exporter's decoration, restore the
+       playhead and force the monitor to rebuild its own route decoration */
+    viewer.entities.removeAll()
+    useRoute.getState().setProgress(originalProgress)
+    refreshProgramViewer()
+  }
+}
+
+/** single 机位: the program IS that shot — record the interactive main globe
+ *  (the only Viewer there is), flying the shot's own route. */
+async function renderSingleShotVideo(): Promise<void> {
+  const viewer = getViewer()
+  if (!viewer) {
+    useExport.getState().finish('主视图未就绪')
+    return
+  }
+
+  const s = useRoute.getState()
+  const route = s.route ?? s.shots[0]?.route
+  if (!route) {
+    useExport.getState().finish('没有可用的机位航线')
+    return
+  }
   // WYSIWYG: a locked camera exports a locked-camera video (growth still animates)
   const camLocked = useUI.getState().cameraLocked
   /* exporting needs a flyable path: ≥2 positioned waypoints (pose-only
@@ -57,7 +171,6 @@ export async function renderRouteVideo(): Promise<void> {
   }
 
   useExport.getState().start()
-  // freeze playback & user input — the recorder owns the camera now
   useUI.getState().setPlaying(false)
   const controller = viewer.scene.screenSpaceCameraController
   const inputsWereEnabled = controller.enableInputs

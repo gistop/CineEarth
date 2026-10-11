@@ -22,7 +22,11 @@
 }
 
 .ce-credits {
-  position: absolute;
+  /* FIXED, not absolute: GlobeViewport now lives inside a grid SLOT (position:
+     relative) — absolute would anchor the strip to that slot. Fixed pins it to
+     the app frame (== viewport, .ce-app is fixed inset 0) regardless of which
+     slot the main globe occupies. */
+  position: fixed;
   /* Same geometry class as Cesium's native credit bar (.cesium-viewer-bottom):
      an edge-anchored strip whose width comes ONLY from left+right. Content can
      never resize or collapse the box (the old shrink-to-fit / flex plate did,
@@ -72,6 +76,295 @@
 }
 
 /* ---------- overlay drawer ---------- */
+
+/* ---------- N-机位 stage (multi-viewport split view) ---------- */
+
+/* same layer the bare globe used to occupy — all chrome floats above */
+.ce-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+}
+
+/* main grid: k equal slots (see gridCols()). The 1px gap over the border
+   colour reads as dividers. NEVER scrolls — shrinking slots is the layout's
+   job, not the user's. */
+.ce-stage-main {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--ce-border);
+}
+
+/* one cell — main globe slot or a ShotPane slot alike */
+.ce-slot {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+/* the main globe's slot is an OVERLAY: it shares the active cell's gridArea
+   (overlapping grid items) and must paint above that cell's pane — which
+   keeps rendering as the overlay moves away. Last child + z-index: belt and
+   braces, so no chip or pane can ever bleed through. */
+.ce-slot-main {
+  z-index: 2;
+}
+
+/* ShotPane's viewer host fills its cell */
+.ce-pane-view,
+.ce-pane-view .cesium-viewer,
+.ce-pane-view .cesium-widget,
+.ce-pane-view .cesium-widget canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* pane name chip — non-interactive overlay */
+.ce-pane-chip {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ce-surface) 72%, transparent);
+  border: 1px solid var(--ce-border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ce-text-2);
+  pointer-events: none;
+}
+
+/* empty-shot indicator: a shot with no position waypoints yet shows an amber
+   dot next to its name (both on pane chips and thumb name rows) — the framing
+   fallback is HOME, but the user still needs to SEE there is nothing to fly */
+/* ----- 主输出 (program) — the edit-decision track -----------------------
+   One row above the 机位 accordion: segments say "which shot is on the
+   program", boundaries (handles) re-time or delete a switch. Segments are
+   display-only (pointer-events none) — every gesture lives on the handles. */
+.ce-program-lane {
+  position: relative;
+}
+
+.ce-program-seg {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--ce-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--ce-accent) 20%, transparent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--ce-text-2);
+  pointer-events: none;
+}
+
+/* the segment on air at the playhead reads stronger */
+.ce-program-seg.is-live {
+  background: color-mix(in srgb, var(--ce-accent) 38%, transparent);
+  color: var(--ce-text-1);
+}
+
+/* the un-编排 gap before the first boundary */
+.ce-program-seg.is-gap {
+  border: 1px dashed var(--ce-border);
+  background: none;
+  color: var(--ce-text-3);
+}
+
+/* boundary handle — drag to re-time, click to delete */
+.ce-program-cut {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  margin-left: -4.5px;
+  z-index: 1;
+  cursor: ew-resize;
+}
+
+.ce-program-cut::after {
+  content: '';
+  position: absolute;
+  inset: 3px 3px;
+  border-radius: 2px;
+  background: var(--ce-accent);
+  opacity: 0.45;
+  transition: opacity var(--ce-dur) var(--ce-ease);
+}
+
+.ce-program-cut:hover::after,
+.ce-program-cut:active::after {
+  opacity: 1;
+}
+
+/* read-only rows of a NON-active expanded shot: same visuals, no gestures —
+   editing writes through the ACTIVE route, so these must never accept one.
+   Slight dimming separates "viewing another 机位" from "editing this one"
+   at a glance without making the keys unreadable. */
+.ce-track.is-readonly {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.ce-pane-chip.is-empty::after,
+.ce-thumb-name.is-empty::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+/* ----- Program Out cell (主输出) — the main grid's FIRST cell -------------
+   The monitor shows what the 主输出 edit puts on air at the playhead (the
+   same view the exporter renders); the 机位 slots beside it are source
+   monitors. It is a grid cell, not an overlay: it owns the anchor position. */
+.ce-slot-program {
+  /* one step above the plain slots — the monitor is the reference picture */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ce-accent) 35%, transparent);
+}
+
+/* the un-编排 state: no Viewer is created at all */
+.ce-program-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--ce-text-3);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+  background: #000;
+}
+
+/* the monitor's own label reads one notch stronger than a 机位 chip */
+.ce-pane-chip.is-program {
+  color: var(--ce-text-1);
+  border-color: color-mix(in srgb, var(--ce-accent) 55%, var(--ce-border));
+}
+
+/* right rail: vertical stack of thumb panes. THIS side may scroll (min-size
+   rule); the main area never does. Hidden entirely at ≤1 shot / preview. */
+.ce-stage-rail {
+  flex: none;
+  width: 208px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--ce-surface);
+  border-left: 1px solid var(--ce-border);
+}
+
+/* one thumb: fixed 16:9-ish view + name row → ~128px tall, comfortably above
+   the 64px minimum; overflow goes to the rail's scrollbar */
+.ce-thumb {
+  position: relative;
+  flex: none;
+  border: 1px solid var(--ce-border);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #000;
+  transition: border-color var(--ce-dur) var(--ce-ease);
+}
+
+.ce-thumb:hover {
+  border-color: var(--ce-accent);
+}
+
+/* the ACTIVE shot being edited gets the accent ring, mirroring the timeline */
+.ce-thumb.is-active {
+  border-color: var(--ce-accent);
+  box-shadow: 0 0 0 1px var(--ce-accent);
+}
+
+/* ---- 大/小 hover buttons — the ONLY way a shot switches between the main
+   grid and the rail. Quiet until hover, then fully legible. They sit ABOVE
+   their slot/thumb and swallow their own click (the container's delegated
+   single-click activation skips them — collapsing must not re-activate). */
+.ce-slot-min,
+.ce-thumb-max {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid var(--ce-border);
+  background: color-mix(in srgb, var(--ce-surface) 72%, transparent);
+  color: var(--ce-text-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--ce-dur) var(--ce-ease), border-color var(--ce-dur) var(--ce-ease),
+    color var(--ce-dur) var(--ce-ease);
+}
+
+.ce-slot:hover .ce-slot-min,
+.ce-thumb:hover .ce-thumb-max {
+  opacity: 1;
+}
+
+.ce-slot-min:hover,
+.ce-thumb-max:hover {
+  border-color: var(--ce-accent);
+  color: var(--ce-text-1);
+}
+
+/* the rail thumb is a flex COLUMN (view + name row) — pin the button to it */
+.ce-thumb-max {
+  top: 5px;
+  right: 5px;
+}
+
+.ce-thumb .ce-pane-view {
+  position: relative;
+  height: 106px;
+}
+
+.ce-thumb-name {
+  display: block;
+  padding: 2px 8px 3px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ce-text-2);
+  background: var(--ce-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .ce-drawer {
   position: absolute;
@@ -889,9 +1182,150 @@
   right: 2px;
 }
 
-.ce-track {
+/* --- 机位 accordion header --------------------------------------------------
+ * A shot row mirrors .ce-track's geometry EXACTLY (same --ce-row-grid columns,
+ * column gap, key-room padding) so the ruler alignment holds by construction:
+ * the header is just another row in the same stack. Label side = the shot's
+ * identity (caret · name · duration · delete); lane side = a dim duration
+ * block sized against the LONGEST shot (length comparison, not a storyboard —
+ * shot sequencing will live here later). In curve mode (.is-detail) the block
+ * hides like every non-curve lane. */
+.ce-shot {
+  /* FIXED row height, not flex-grow: with few rows (storyboard view) flex:1
+     stretched each header to tens of px tall — the "table row" look. Rows now
+     stack tight; leftover panel space just stays empty below. */
+  flex: none;
+  height: 24px;
+  display: grid;
+  grid-template-columns: var(--ce-row-grid);
+  column-gap: var(--ce-lane-gap);
+  align-items: center;
+  padding-right: var(--ce-lane-key-room);
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+}
+.ce-shot-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+/* the BLOCK-highlight selection language (agreed vs the channel rows' thin
+   band): an active shot announces itself with a filled chip behind identity */
+.ce-shot.is-active .ce-shot-side {
+  background: var(--ce-accent-soft);
+}
+.ce-shot-caret {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ce-text-2);
+  transition: transform 140ms ease;
+}
+/* the caret follows EXPANSION (visual), not activation (editing semantics):
+   a collapsed-yet-active shot keeps its highlight but the arrow stays shut */
+.ce-shot-caret.is-open {
+  transform: rotate(90deg);
+  color: var(--ce-accent);
+}
+.ce-shot-name {
   flex: 1;
-  min-height: 24px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ce-text-2);
+}
+.ce-shot.is-active .ce-shot-name {
+  color: var(--ce-accent);
+  font-weight: 500;
+}
+.ce-shot-dur {
+  flex: none;
+  font-size: 11px;
+  color: var(--ce-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.ce-shot-del {
+  flex: none;
+  border: 0;
+  padding: 0 3px;
+  background: none;
+  color: var(--ce-text-3);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.ce-shot:hover .ce-shot-del {
+  opacity: 1;
+}
+.ce-shot-del:hover {
+  color: var(--ce-danger, #e5484d);
+}
+.ce-shot-rename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  border: 1px solid var(--ce-accent);
+  border-radius: 3px;
+  background: var(--ce-surface-1, var(--ce-surface-2));
+  color: var(--ce-text);
+  font-size: 12px;
+  padding: 0 4px;
+}
+/* lane side — same slab metrics as a channel lane; the span block is the
+   shot's duration against the longest shot (min 4% stub for empty shots) */
+.ce-shot-lane {
+  position: relative;
+  height: 100%;
+  min-height: 22px;
+  border-radius: 5px;
+  background: var(--ce-surface-2);
+  overflow: hidden;
+}
+.ce-shot-span {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  border-radius: 3px;
+  background: var(--ce-accent);
+  opacity: 0.16;
+}
+.ce-shot.is-active .ce-shot-span {
+  opacity: 0.38;
+}
+.ce-lanes.is-detail .ce-shot-lane {
+  visibility: hidden;
+}
+/* the ＋新建机位 row — quieter than a shot, no slab on the lane side */
+.ce-shot-add {
+  height: 22px;
+}
+.ce-shot-add .ce-shot-lane {
+  background: transparent;
+}
+.ce-shot-add .ce-shot-name {
+  color: var(--ce-text-3);
+}
+.ce-shot-add:hover .ce-shot-name,
+.ce-shot-add:hover .ce-shot-caret {
+  color: var(--ce-accent);
+}
+
+.ce-track {
+  /* fixed height — see .ce-shot: rows stack at natural line spacing instead
+     of stretching to fill the panel */
+  flex: none;
+  height: 24px;
   display: grid;
   grid-template-columns: var(--ce-row-grid);
   column-gap: var(--ce-lane-gap);

@@ -1,6 +1,7 @@
 // Route drawer — right-side overlay, symmetric to the tools drawer.
 // Same shell rules: floats over the globe, bottom stops above the timeline.
 
+import { useMemo } from 'react'
 import { useUI } from '../../store/ui'
 import { CloseIcon, RouteIcon } from '../../components/Icons'
 import { buildTrack, totalDuration } from './pathMath'
@@ -18,7 +19,7 @@ export default function RouteDrawer() {
   const route = useRoute((s) => s.route)
   const setRoute = useRoute((s) => s.setRoute)
 
-  const track = buildTrack(route)
+  const track = useMemo(() => (route ? buildTrack(route) : []), [route])
   const distance = track.length > 0 ? track[track.length - 1].cumulative : 0
 
   return (
@@ -32,8 +33,9 @@ export default function RouteDrawer() {
           <button
             type="button"
             className="ce-ghost-btn"
+            disabled={!route}
             onClick={() => setRoute(createDemoRoute())}
-            title="Replace the current route with the Matterhorn demo fly-around"
+            title={route ? 'Replace the current route with the Matterhorn demo fly-around' : '未选中机位'}
           >
             Load demo
           </button>
@@ -43,29 +45,36 @@ export default function RouteDrawer() {
         </span>
       </header>
 
-      {/* charts and stats stay pinned; only the waypoint list scrolls */}
-      <div className="ce-drawer-body ce-route-body">
-        <div className="ce-route-fixed">
-          <RouteTopView route={route} />
-          <RouteSideView route={route} />
+      {!route ? (
+        /* no shot being edited — the route editor has nothing to show */
+        <div className="ce-drawer-body ce-route-body">
+          <p className="ce-hint">未选中机位 — 点击某个机位开始编辑航线。</p>
+        </div>
+      ) : (
+        /* charts and stats stay pinned; only the waypoint list scrolls */
+        <div className="ce-drawer-body ce-route-body">
+          <div className="ce-route-fixed">
+            <RouteTopView route={route} />
+            <RouteSideView route={route} />
 
-          <div className="ce-route-stats">
-            <span>{route.name}</span>
-            <span>
-              {totalDuration(route).toFixed(0)} s · {fmtKm(distance)} · {route.waypoints.length} wp
-            </span>
+            <div className="ce-route-stats">
+              <span>{route.name}</span>
+              <span>
+                {totalDuration(route).toFixed(0)} s · {fmtKm(distance)} · {route.waypoints.length} wp
+              </span>
+            </div>
+
+            <p className="ce-hint">
+              {route.waypoints.length === 0
+                ? 'Click the top-view map to add waypoints — or Load demo for an example.'
+                : 'Waypoints — camera keyframes'}
+            </p>
           </div>
-
-          <p className="ce-hint">
-            {route.waypoints.length === 0
-              ? 'Click the top-view map to add waypoints — or Load demo for an example.'
-              : 'Waypoints — camera keyframes'}
-          </p>
+          <div className="ce-route-list">
+            <WaypointList />
+          </div>
         </div>
-        <div className="ce-route-list">
-          <WaypointList />
-        </div>
-      </div>
+      )}
     </aside>
   )
 }

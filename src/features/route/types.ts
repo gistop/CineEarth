@@ -112,6 +112,28 @@ export type Pose = {
   fov: number
 }
 
+/** FREE-NAVIGATION camera state remembered per 机位 — the framing memory for
+ *  a shot with no waypoints yet. Written whenever the user finishes moving
+ *  the main globe's camera while that shot is active; restored on switching
+ *  back. Same units as Pose, minus fov (the frustum keeps its default). */
+export type FreeCam = {
+  lon: number
+  lat: number
+  height: number
+  heading: number
+  pitch: number
+  roll: number
+}
+
+/** one 主输出 (program) boundary: "from playhead fraction t, the program
+ *  cuts to shotId". Cuts are sorted by t; each holds until the next cut, the
+ *  last one holds to the end. t is a 0..1 playhead fraction (same domain as
+ *  growth keys), NOT seconds — the timeline length may differ per shot. */
+export type ProgramCut = {
+  t: number
+  shotId: string
+}
+
 export const DEFAULT_WAYPOINT_DURATION = 3
 /** default camera pitch — gentle downward framing (used when the pitch
  *  channel has no key at all) */

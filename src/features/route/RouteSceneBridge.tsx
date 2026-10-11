@@ -18,6 +18,7 @@ import {
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
+import { applyFraming, frameOf } from './framing'
 import {
   haversineM,
   samplePath,
@@ -45,7 +46,7 @@ export default function RouteSceneBridge() {
   /* ---- route entities: spline polyline + waypoint points ---- */
   useEffect(() => {
     const viewer = getViewer()
-    if (!viewer) return
+    if (!viewer || !route) return
 
     const entities: Entity[] = []
     const poses = samplePath(route, 160)
@@ -116,7 +117,7 @@ export default function RouteSceneBridge() {
      visually uniform (spline parameter t is NOT uniform in length). */
   useEffect(() => {
     const viewer = getViewer()
-    if (!viewer || !growthLine) return
+    if (!viewer || !growthLine || !route) return
 
     const poses = samplePath(route, 160)
     if (poses.length < 2) return
@@ -194,7 +195,10 @@ export default function RouteSceneBridge() {
     /* progress is a TIMELINE fraction; the pose is a CONTENT position — a
        timeline longer than the content holds the final pose, a shorter one
        truncates the flight (identity when both are equal) */
-    const route = useRoute.getState().route
+    const st = useRoute.getState()
+    /* same domain as the timeline/playback clock (active shot, else first) */
+    const route = st.route ?? st.shots[0]?.route
+    if (!route) return
     const pose = samplePose(route, timelineProgressToRoute(route, progress))
     const viewer = getViewer()
     if (pose && viewer) {
@@ -241,6 +245,27 @@ export default function RouteSceneBridge() {
     [],
   )
 
+  /* 机位切换 → restore THE SHOT'S framing. The camera used to be one global
+     shared state, so activating a fresh shot silently inherited the previous
+     shot's view. Now every activation resolves this shot's own framing:
+     route pose at the playhead → freeCam memory → HOME. Skipped while the
+     camera is locked (the user is holding the viewpoint on purpose) or while
+     the offline renderer owns the camera. */
+  useEffect(
+    () =>
+      useRoute.subscribe((s, prev) => {
+        if (s.activeShotId === prev.activeShotId) return
+        if (useExport.getState().status === 'rendering') return
+        if (useUI.getState().cameraLocked) return
+        const viewer = getViewer()
+        if (!viewer) return
+        const shot = s.shots.find((sh) => sh.id === s.activeShotId)
+        if (!shot) return
+        applyFraming(viewer, frameOf(shot, s.progress))
+      }),
+    [],
+  )
+
   useEffect(() => {
     let raf = 0
 
@@ -254,9 +279,14 @@ export default function RouteSceneBridge() {
       if (!useUI.getState().playing) return
 
       const s = useRoute.getState()
+      /* play against the SAME domain the timeline draws with: the active shot,
+         else the first 机位 — so playback still runs when nothing is being
+         edited (every 机位 collapsed, only 主输出 on screen) */
+      const route = s.route ?? s.shots[0]?.route
+      if (!route) return
       /* playback clock runs the full TIMELINE (so a length longer than the
          content plays out its hold, and a shorter one ends at the cut) */
-      const total = timelineDuration(s.route)
+      const total = timelineDuration(route)
       if (total <= 0) return
 
       if (t0Ref.current === 0) t0Ref.current = now - s.progress * total * 1000

@@ -355,12 +355,10 @@ export default function RouteTopView({ route }: { route: Route }) {
       const size = map.getSize()
       if (!size || size[0] < 10 || size[1] < 10) return false
 
-      /* waypoint envelope (position keys only; pose-only keys have no spot) */
-      const pts = useRoute
-        .getState()
-        .route.waypoints.map((w) =>
-          w.lon != null && w.lat != null ? fromLonLat([w.lon, w.lat]) : null,
-        )
+      /* waypoint envelope (position keys only; pose-only keys have no spot).
+         No active shot → no envelope (nothing to fit). */
+      const pts = (useRoute.getState().route?.waypoints ?? [])
+        .map((w) => (w.lon != null && w.lat != null ? fromLonLat([w.lon, w.lat]) : null))
         .filter((p): p is [number, number] => p !== null)
       if (pts.length > 0) {
         let minX = Infinity

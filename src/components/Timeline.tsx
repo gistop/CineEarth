@@ -37,7 +37,7 @@ export default function Timeline() {
   const toggleDrawer = useUI((s) => s.toggleDrawer)
   const targetPickMode = useUI((s) => s.targetPickMode)
   const setTargetPickMode = useUI((s) => s.setTargetPickMode)
-  const hasTarget = useRoute((s) => s.route.target != null)
+  const hasTarget = useRoute((s) => s.route?.target != null)
   const setTarget = useRoute((s) => s.setTarget)
   const playing = useUI((s) => s.playing)
   const setPlaying = useUI((s) => s.setPlaying)
@@ -50,14 +50,19 @@ export default function Timeline() {
   const growthLine = useReveal((s) => s.growthLine)
   const setGrowthLine = useReveal((s) => s.setGrowthLine)
 
-  const route = useRoute((s) => s.route)
+  const liveRoute = useRoute((s) => s.route)
+  const shots = useRoute((s) => s.shots)
   const setProgress = useRoute((s) => s.setProgress)
 
   const exportStatus = useExport((s) => s.status)
   const exportProgress = useExport((s) => s.progress)
 
-  /* the ruler's domain = the timeline length setting (not the content end) */
-  const DURATION = timelineDuration(route)
+  /* the ruler's domain = the timeline length setting (not the content end).
+     No active shot → fall back to the FIRST 机位 so this ruler shares ONE
+     basis with the tracks grid (otherwise the playhead and the cut lines drift
+     apart, and the header stops scrubbing because DURATION collapses to 0). */
+  const route = liveRoute ?? shots[0]?.route
+  const DURATION = route ? timelineDuration(route) : 0
   const rendering = exportStatus === 'rendering'
 
   /* live resize of the expanded panel — the top edge is the grip */
@@ -220,12 +225,15 @@ export default function Timeline() {
           <button
             type="button"
             className={`ce-render-btn${rendering ? ' is-rendering' : ''}${exportStatus === 'error' ? ' is-error' : ''}`}
+            disabled={!route && !rendering}
             title={
               exportStatus === 'error'
                 ? useExport.getState().error ?? 'Render failed'
                 : rendering
                   ? `Rendering ${Math.round(exportProgress * 100)}% — click to cancel`
-                  : 'Render video (MP4)'
+                  : route
+                    ? 'Render video (MP4)'
+                    : '未选中机位 — 无可渲染的航线'
             }
             onClick={renderRouteVideo}
           >
