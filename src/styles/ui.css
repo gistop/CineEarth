@@ -79,12 +79,69 @@
 
 /* ---------- N-机位 stage (multi-viewport split view) ---------- */
 
-/* same layer the bare globe used to occupy — all chrome floats above */
+/* same layer the bare globe used to occupy — all chrome floats above.
+   OVERLAY layout (default): the stage stays full-bleed and the chrome floats
+   on top of it. PUSH layout: the panels take their space OUT of the stage
+   (--ce-push-* are fed from ViewportStage), so the stage — the WINDOW — is
+   squeezed. What is never squeezed is the picture: every monitor keeps the
+   output aspect inside a .ce-frame (below). */
 .ce-stage {
   position: absolute;
   inset: 0;
   z-index: 0;
   display: flex;
+}
+.ce-stage[data-layout='push'] {
+  left: var(--ce-push-l, 0px);
+  right: var(--ce-push-r, 0px);
+  bottom: var(--ce-push-b, 0px);
+  /* the drawers slide in, so the stage follows them; the timeline is dragged
+     continuously and must track the pointer 1:1 — bottom gets no transition */
+  transition: left var(--ce-dur) var(--ce-ease), right var(--ce-dur) var(--ce-ease);
+}
+
+/* the picture frame inside every monitor cell: the viewer canvas ALWAYS keeps
+   the output aspect. Overlay → the frame simply fills the cell (the window IS
+   the picture). Push → the cell shrinks with the panels, so the frame becomes
+   the largest rectangle of that aspect that fits, centred, with the cell's
+   black showing as letterbox bars. */
+.ce-frame {
+  position: absolute;
+  inset: 0;
+}
+.ce-stage[data-layout='push'] .ce-slot {
+  /* sizing container — the frame measures itself against THIS cell */
+  container-type: size;
+}
+.ce-stage[data-layout='push'] .ce-frame {
+  inset: 0;
+  margin: auto;
+  width: min(100cqw, calc(100cqh * var(--ce-out-w) / var(--ce-out-h)));
+  height: min(100cqh, calc(100cqw * var(--ce-out-h) / var(--ce-out-w)));
+}
+
+/* GES-style EDITOR window (push): the editor's canvas stays FULL-BLEED and
+   the output frame is drawn on top as a rectangle — everything outside it is
+   darkened by an oversized box-shadow. Inside the rect is the picture;
+   outside is context (still visible AND still interactive — the mask is
+   pointer-events: none). While exporting, the class is dropped so the editor
+   letterboxes like a monitor and its canvas records exactly the picture. */
+.ce-stage[data-layout='push'] .ce-frame.is-scope {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+.ce-frame-mask {
+  --ce-fw: min(100cqw, calc(100cqh * var(--ce-out-w) / var(--ce-out-h)));
+  --ce-fh: min(100cqh, calc(100cqw * var(--ce-out-h) / var(--ce-out-w)));
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: var(--ce-fw);
+  height: var(--ce-fh);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  outline: 1px solid rgba(255, 255, 255, 0.32);
+  pointer-events: none;
 }
 
 /* main grid: k equal slots (see gridCols()). The 1px gap over the border
@@ -569,6 +626,39 @@
 }
 .ce-theme-opt.is-on .ce-theme-name {
   color: var(--ce-text);
+  font-weight: 500;
+}
+
+/* --- segmented control (Props: 布局模式) ----------------------------------
+ * Two-state pill row: the active segment takes the accent. Used for the
+ * mutually-exclusive layout mode (覆盖 / 挤压). */
+.ce-seg {
+  display: flex;
+  gap: 2px;
+  margin: 0 6px 4px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border);
+}
+.ce-seg-btn {
+  flex: 1;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ce-text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.ce-seg-btn:hover {
+  color: var(--ce-text);
+}
+.ce-seg-btn.is-on {
+  background: var(--ce-accent-soft);
+  color: var(--ce-accent);
   font-weight: 500;
 }
 

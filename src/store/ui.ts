@@ -11,6 +11,9 @@ const clampTlHeight = (h: number) =>
 
 export type DrawerTab = 'layers' | 'shots' | 'properties' | 'assets'
 
+/** how the chrome relates to the stage — see UIState.layoutMode */
+export type LayoutMode = 'overlay' | 'push'
+
 interface UIState {
   /** left overlay drawer */
   drawerOpen: boolean
@@ -49,6 +52,13 @@ interface UIState {
    *  interaction are untouched */
   laneBars: boolean
 
+  /** layout mode (Props switch, default 'push'). 'overlay' = the chrome
+   *  floats above a full-bleed canvas (the window IS the picture); 'push' =
+   *  the chrome takes its space OUT of the stage and every monitor keeps the
+   *  OUTPUT aspect — letterbox bars on monitors, GES-style darkened surround
+   *  on the editor (挤压窗口，不挤压画幅). */
+  layoutMode: LayoutMode
+
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
   toggleRightDrawer: (open?: boolean) => void
@@ -65,6 +75,7 @@ interface UIState {
   setTlUnit: (u: 'sec' | 'frame') => void
   toggleTlKeyValues: (id: string) => void
   setLaneBars: (on: boolean) => void
+  setLayoutMode: (m: LayoutMode) => void
 
   /** interface theme (Props tab) — style-only, applied via [data-theme] */
   theme: ThemeId
@@ -87,6 +98,7 @@ export const useUI = create<UIState>((set) => ({
   tlUnit: 'sec',
   tlKeyValues: {},
   laneBars: true,
+  layoutMode: 'push',
 
   theme: loadTheme(),
   setTheme: (t) => set({ theme: t }),
@@ -110,4 +122,5 @@ export const useUI = create<UIState>((set) => ({
   toggleTlKeyValues: (id) =>
     set((s) => ({ tlKeyValues: { ...s.tlKeyValues, [id]: !s.tlKeyValues[id] } })),
   setLaneBars: (on) => set({ laneBars: on }),
+  setLayoutMode: (m) => set({ layoutMode: m }),
 }))

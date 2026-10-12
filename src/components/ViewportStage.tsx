@@ -19,7 +19,7 @@
 // layout change, and so does every pane: each slot owns a PERSISTENT
 // ShotPane (key = shot.id), muted while the overlay covers it.
 
-import { useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   Entity,
   ImageryLayer,
@@ -229,6 +229,37 @@ function ShotPane({
     if (followProgram) setProgramRefresh(() => refreshRef.current())
 
     let lastApply = 0
+    /** pending trailing apply. The throttle must never DROP the last move: a
+     *  scrub/playback that stops inside the budget window used to leave this
+     *  camera on a stale frame — which is exactly how 主输出 and a 机位 pane
+     *  end up showing DIFFERENT moments of the same shot at the same playhead
+     *  (their lastApply clocks are independent). */
+    let trailing: number | null = null
+    const applyNow = () => {
+      if (trailing != null) {
+        clearTimeout(trailing)
+        trailing = null
+      }
+      lastApply = performance.now()
+      applyFramingNow()
+      scene.requestRender()
+    }
+    /** throttled apply with a trailing catch-up; force skips the budget */
+    const applyThrottled = (force = false) => {
+      const now = performance.now()
+      const budget = FOLLOW_MS[variantRef.current]
+      if (!force && now - lastApply < budget) {
+        if (trailing == null) {
+          trailing = window.setTimeout(() => {
+            trailing = null
+            applyNow()
+          }, budget - (now - lastApply))
+        }
+        return
+      }
+      applyNow()
+    }
+
     const unsub = useRoute.subscribe((s, prev) => {
       /* muted pane: the store may move on without us — the unmute effect
          re-syncs everything from scratch */
@@ -237,38 +268,35 @@ function ShotPane({
         /* the exporter owns this Viewer frame-by-frame while rendering — skip
            the throttled auto-follow so the two never fight over one camera */
         if (useExport.getState().status === 'rendering') return
-        /* Program Out: the SOURCE itself can change between ticks — crossing
-           a cut re-targets entities AND camera inside this same Viewer */
-        const prevSid = programShotAt(prev.program, prev.progress)
-        if (programShotAt(s.program, s.progress) !== prevSid) rebuild()
-        const now = performance.now()
-        if (now - lastApply < FOLLOW_MS[variantRef.current]) return
-        lastApply = now
-        applyFramingNow()
-        scene.requestRender()
+        /* Program Out: the SOURCE itself can change between ticks — crossing a
+           cut re-targets entities AND camera inside this same Viewer. Both must
+           move TOGETHER (never the new source through the old camera), so a cut
+           BYPASSES the throttle. */
+        if (programShotAt(s.program, s.progress) !== programShotAt(prev.program, prev.progress)) {
+          rebuild()
+          applyThrottled(true)
+          return
+        }
+        /* any other change (playhead tick, a route edit…) re-frames too */
+        applyThrottled()
         return
       }
       if (s.progress !== prev.progress) {
-        const now = performance.now()
-        if (now - lastApply < FOLLOW_MS[variantRef.current]) return
-        lastApply = now
-        applyFramingNow()
-        scene.requestRender()
+        applyThrottled()
         return
       }
       const shot = s.shots.find((sh) => sh.id === shotId)
       const prevShot = prev.shots.find((sh) => sh.id === shotId)
       if (shot !== prevShot) {
         rebuild()
-        lastApply = performance.now()
-        applyFramingNow()
-        scene.requestRender()
+        applyThrottled(true)
       }
     })
 
     return () => {
       unsubImagery()
       unsub()
+      if (trailing != null) clearTimeout(trailing)
       viewerRef.current = null
       if (followProgram) {
         setProgramViewer(null)
@@ -299,6 +327,10 @@ export default function ViewportStage() {
   const activeId = useRoute((s) => s.activeShotId)
   const minimized = useRoute((s) => s.minimizedShotIds)
   const previewMode = useUI((s) => s.previewMode)
+  const layoutMode = useUI((s) => s.layoutMode)
+  const drawerOpen = useUI((s) => s.drawerOpen)
+  const rightDrawerOpen = useUI((s) => s.rightDrawerOpen)
+  const rendering = useExport((s) => s.status === 'rendering')
   const setActiveShot = useRoute((s) => s.setActiveShot)
   const toggleMinimizedShot = useRoute((s) => s.toggleMinimizedShot)
 
@@ -349,8 +381,32 @@ export default function ViewportStage() {
     setActiveShot(id)
   }
 
+  /* push layout: the chrome takes its space OUT of the stage. Preview mode
+     hides all chrome, so it always stays full-bleed (the window IS the
+     picture there). The per-monitor output framing is pure CSS — see
+     .ce-frame in ui.css. */
+  const push = layoutMode === 'push' && !previewMode
+
+  /* GES-style editor window: in push (and not exporting) the editor canvas
+     stays FULL-BLEED with a darkened surround outside the output frame
+     (.ce-frame-mask in ui.css). While rendering the editor letterboxes like
+     a monitor, so the canvas being recorded is exactly the picture. */
+  const editorScope = push && !rendering
+
   return (
-    <div className="ce-stage">
+    <div
+      className="ce-stage"
+      data-layout={push ? 'push' : 'overlay'}
+      style={
+        push
+          ? ({
+              '--ce-push-l': drawerOpen ? 'var(--ce-drawer-w)' : '0px',
+              '--ce-push-r': rightDrawerOpen ? 'var(--ce-drawer-w)' : '0px',
+              '--ce-push-b': 'var(--ce-tl-h)',
+            } as CSSProperties)
+          : undefined
+      }
+    >
       <div
         className="ce-stage-main"
         style={{
@@ -366,12 +422,16 @@ export default function ViewportStage() {
             data-shot-id: clicking the monitor is not "activating a shot" */}
         {showProgram && (
           <div className="ce-slot ce-slot-program" style={{ gridArea: areaOf(0) }}>
-            <ProgramSlot />
+            <div className="ce-frame">
+              <ProgramSlot />
+            </div>
           </div>
         )}
         {mainIds.map((id, i) => (
           <div key={id} className="ce-slot" data-shot-id={id} style={{ gridArea: slotArea(i) }}>
-            <ShotPane shotId={id} variant="pane" muted={id === activeId} />
+            <div className="ce-frame">
+              <ShotPane shotId={id} variant="pane" muted={id === activeId} />
+            </div>
             {/* the active slot's OWN chip comes from the overlay below (this
                 one would sit underneath it) */}
             {!previewMode && id !== activeId && (
@@ -394,7 +454,10 @@ export default function ViewportStage() {
             No active shot (edit target cleared) → no overlay, pure monitors. */}
         {activeId != null && (
           <div className="ce-slot ce-slot-main" data-shot-id={activeId} style={{ gridArea: activeArea }}>
-            <GlobeViewport />
+            <div className={`ce-frame${editorScope ? ' is-scope' : ''}`}>
+              <GlobeViewport />
+              {editorScope && <span className="ce-frame-mask" aria-hidden="true" />}
+            </div>
             {!previewMode && (
               <>
                 <span

@@ -176,6 +176,14 @@ async function renderSingleShotVideo(): Promise<void> {
   const inputsWereEnabled = controller.enableInputs
   controller.enableInputs = false
 
+  /* push+scope layout keeps the editor canvas FULL-BLEED; rendering makes the
+     stage letterbox it to the OUTPUT frame (see ViewportStage). Give React+CSS
+     a frame to apply that, then sync the Cesium canvas — the recorder reads
+     canvas.width immediately and it must already be the picture, not the
+     darkened surround. */
+  await new Promise((r) => requestAnimationFrame(() => r(null)))
+  viewer.resize()
+
   try {
     const path: RecordPath = {
       begin: () => {

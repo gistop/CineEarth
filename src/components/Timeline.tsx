@@ -50,18 +50,14 @@ export default function Timeline() {
   const growthLine = useReveal((s) => s.growthLine)
   const setGrowthLine = useReveal((s) => s.setGrowthLine)
 
-  const liveRoute = useRoute((s) => s.route)
-  const shots = useRoute((s) => s.shots)
+  const route = useRoute((s) => s.route)
   const setProgress = useRoute((s) => s.setProgress)
 
   const exportStatus = useExport((s) => s.status)
   const exportProgress = useExport((s) => s.progress)
 
   /* the ruler's domain = the timeline length setting (not the content end).
-     No active shot → fall back to the FIRST 机位 so this ruler shares ONE
-     basis with the tracks grid (otherwise the playhead and the cut lines drift
-     apart, and the header stops scrubbing because DURATION collapses to 0). */
-  const route = liveRoute ?? shots[0]?.route
+     No active shot → nothing to measure; a zero domain keeps the ruler inert. */
   const DURATION = route ? timelineDuration(route) : 0
   const rendering = exportStatus === 'rendering'
 

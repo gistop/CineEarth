@@ -4,6 +4,7 @@ import { LayersIcon, FilmIcon, TuneIcon, FolderIcon, CloseIcon } from './Icons'
 import IonSettingsPanel from '../features/settings/IonSettingsPanel'
 import SceneSettingsPanel from '../features/settings/SceneSettingsPanel'
 import ThemePanel from '../features/settings/ThemePanel'
+import LayoutPanel from '../features/settings/LayoutPanel'
 import { useAssets } from '../features/assets/assetStore'
 import { importAssetFile, isSupportedAsset, removeAsset, setAssetVisible, zoomToAsset } from '../features/assets/assetScene'
 
@@ -114,6 +115,7 @@ function ShotsPanel() {
 function PropsPanel() {
   return (
     <>
+      <LayoutPanel />
       <ThemePanel />
       <SceneSettingsPanel />
     </>

@@ -212,8 +212,7 @@ type BrushDrag =
  *  drag the brush to pan, drag its end handles to zoom, brush empty space to
  *  select a new window, plain-click to move the playhead, dbl-click to reset. */
 export function TimelineRuler({ view }: { view?: TlView }) {
-  const liveRoute = useRoute((s) => s.route)
-  const shots = useRoute((s) => s.shots)
+  const route = useRoute((s) => s.route)
   const progress = useRoute((s) => s.progress)
   const setProgress = useRoute((s) => s.setProgress)
   const setScrubbing = useUI((s) => s.setScrubbing)
@@ -227,10 +226,7 @@ export function TimelineRuler({ view }: { view?: TlView }) {
   const brushRef = useRef<BrushDrag | null>(null)
 
   /* the TIMELINE domain (settings 长度) — authoritative, not the content end.
-     No active shot → fall back to the FIRST 机位 so this ruler shares ONE basis
-     with the tracks grid (a 0 domain pinned the playhead at 0 AND collapsed the
-     scrub math — timeAt() would always return 0). */
-  const route = liveRoute ?? shots[0]?.route
+     No active shot → zero domain; the ruler stays inert (progress is 0). */
   const DURATION = route ? timelineDuration(route) : 0
   const fps = route?.fps ?? 30
   /* focus–context: ALWAYS the full-overview mapping — the window is drawn
@@ -709,11 +705,8 @@ export default function TimelineTracks() {
       useRoute.subscribe((s) => {
         const { playing, scrubbing, tlView: v } = useUI.getState()
         if (!playing || scrubbing) return
-        /* pan against the SAME domain the ruler/tracks draw with (active shot,
-           else the first 机位) so auto-follow never fights the shared basis */
-        const r = s.route ?? s.shots[0]?.route
-        if (!r) return
-        const dur = timelineDuration(r)
+        if (!s.route) return
+        const dur = timelineDuration(s.route)
         const span = Math.min(Math.max(v.span, MIN_VIEW), dur)
         if (span >= dur) return // fit-all — nothing to pan
         const t = s.progress * dur
