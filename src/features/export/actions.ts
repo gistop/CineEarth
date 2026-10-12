@@ -56,6 +56,30 @@ export async function renderRouteVideo(): Promise<void> {
   await renderSingleShotVideo()
 }
 
+/** off-screen render grade for the recorded Viewer. The recorder rescales
+ *  whatever canvas it gets to outputSize — a small monitor cell (~500px)
+ *  upscaled into a 1080p file is a soft FAKE 1080p. Raising resolutionScale
+ *  makes the canvas itself carry the output's pixel count (Cesium clamps the
+ *  scale to 4, plenty for any sane cell). SSE is left untouched: a bigger
+ *  canvas automatically pulls finer tiles at the same screen-space error. */
+function withRenderScale(viewer: Viewer, outW: number, outH: number): () => void {
+  const prev = viewer.resolutionScale
+  const dpr = window.devicePixelRatio || 1
+  const need = Math.max(
+    outW / Math.max(1, viewer.canvas.clientWidth * dpr),
+    outH / Math.max(1, viewer.canvas.clientHeight * dpr),
+  )
+  if (need > prev) {
+    viewer.resolutionScale = Math.min(need, 4)
+    viewer.scene.requestRender()
+  }
+  return () => {
+    if (viewer.isDestroyed() || viewer.resolutionScale === prev) return
+    viewer.resolutionScale = prev
+    viewer.scene.requestRender()
+  }
+}
+
 /** the cut-together picture: cross cuts re-target entities AND camera inside
  *  the Program Out Viewer. The exporter OWNS this Viewer for the render — the
  *  monitor's own throttled auto-follow is paused for the duration. */
@@ -100,6 +124,12 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
     useRoute.getState().setProgress(progress)
   }
 
+  /* 尺寸 setting: encode size + on-screen frame ratio share this source,
+     so the push-layout canvas ratio always matches (pure resize). The scale
+     boost below makes the canvas carry these pixels for real. */
+  const out = { width: useUI.getState().outW, height: useUI.getState().outH }
+  const restoreScale = withRenderScale(viewer, out.width, out.height)
+
   try {
     const path: RecordPath = {
       begin: () => {
@@ -116,6 +146,7 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
     }
 
     const blob = await recordVideo({
+      outputSize: out,
       canvas: viewer.canvas,
       path,
       waitTilesLoaded: async () => {
@@ -137,6 +168,7 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
       : err instanceof Error ? err.message : String(err)
     useExport.getState().finish(message ?? undefined)
   } finally {
+    restoreScale()
     controller.enableInputs = inputsWereEnabled
     /* hand the Viewer back: clear the exporter's decoration, restore the
        playhead and force the monitor to rebuild its own route decoration */
@@ -184,6 +216,12 @@ async function renderSingleShotVideo(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(null)))
   viewer.resize()
 
+  /* 尺寸 setting: encode size + on-screen frame ratio share this source,
+     so the push-layout canvas ratio always matches (pure resize). The scale
+     boost below makes the canvas carry these pixels for real. */
+  const out = { width: useUI.getState().outW, height: useUI.getState().outH }
+  const restoreScale = withRenderScale(viewer, out.width, out.height)
+
   try {
     const path: RecordPath = {
       begin: () => {
@@ -204,6 +242,7 @@ async function renderSingleShotVideo(): Promise<void> {
     }
 
     const blob = await recordVideo({
+      outputSize: out,
       canvas: viewer.canvas,
       path,
       waitTilesLoaded: async () => {
@@ -225,6 +264,7 @@ async function renderSingleShotVideo(): Promise<void> {
       : err instanceof Error ? err.message : String(err)
     useExport.getState().finish(message ?? undefined)
   } finally {
+    restoreScale()
     controller.enableInputs = inputsWereEnabled
   }
 }

@@ -17,8 +17,9 @@ type LenUnit = 'sec' | 'frame'
  * hides with the tracks when collapsed.
  *
  * 长度 (route.timelineLen), 插入 (route.insertStrategy) and 帧率 (route.fps)
- * are wired to the store; 尺寸 is still a UI mock until the export pipeline
- * grows its own settings.
+ * are wired to the store; 尺寸 (ui.outW/outH) drives the on-screen frame
+ * ratio (--ce-out-w/h: monitor letterbox + GES mask) AND the encoded video
+ * size — one source of truth for framing and export.
  */
 export default function TimelineSettings() {
   const route = useRoute((s) => s.route)
@@ -35,9 +36,15 @@ export default function TimelineSettings() {
   /* duration-change modifier (GES "将现有关键帧的时长调节到新时长") — a sticky
      flag, safe precisely because the length only commits on Enter / blur */
   const [scale, setScale] = useState(false)
-  /* output size — UI only for now */
-  const [w, setW] = useState(1920)
-  const [h, setH] = useState(1080)
+  /* output size — global (not per-route): re-letters every monitor AND
+   *  re-targets the export encode in one move */
+  const outW = useUI((s) => s.outW)
+  const outH = useUI((s) => s.outH)
+  const setOutSize = useUI((s) => s.setOutSize)
+  /* like the length: DRAFTS committed on Enter / blur — committing per
+   *  keystroke would re-letterbox every monitor on each intermediate value */
+  const [draftW, setDraftW] = useState<string | null>(null)
+  const [draftH, setDraftH] = useState<string | null>(null)
 
   /* no shot being edited → the project settings column has nothing to edit */
   if (!route) return null
@@ -81,6 +88,15 @@ export default function TimelineSettings() {
   const num = (v: string, prev: number) => {
     const n = Math.round(Number(v))
     return Number.isFinite(n) && n > 0 ? n : prev
+  }
+
+  /** Enter / blur: commit the size draft (store clamps to even, sane px) */
+  const commitSize = () => {
+    if (draftW != null || draftH != null) {
+      setOutSize(num(draftW ?? '', outW), num(draftH ?? '', outH))
+    }
+    setDraftW(null)
+    setDraftH(null)
   }
 
   return (
@@ -178,9 +194,17 @@ export default function TimelineSettings() {
             type="text"
             inputMode="numeric"
             aria-label="宽度"
-            title="输出宽度 (px)"
-            value={w}
-            onChange={(e) => setW(num(e.target.value, w))}
+            title="输出宽度 (px) — 回车确认；画幅框与导出分辨率同时生效"
+            value={draftW ?? String(outW)}
+            onChange={(e) => setDraftW(e.target.value)}
+            onBlur={commitSize}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSize()
+              else if (e.key === 'Escape') {
+                setDraftW(null)
+                setDraftH(null)
+              }
+            }}
           />
           <span className="ce-tl-x">×</span>
           <input
@@ -188,9 +212,17 @@ export default function TimelineSettings() {
             type="text"
             inputMode="numeric"
             aria-label="高度"
-            title="输出高度 (px)"
-            value={h}
-            onChange={(e) => setH(num(e.target.value, h))}
+            title="输出高度 (px) — 回车确认；画幅框与导出分辨率同时生效"
+            value={draftH ?? String(outH)}
+            onChange={(e) => setDraftH(e.target.value)}
+            onBlur={commitSize}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSize()
+              else if (e.key === 'Escape') {
+                setDraftW(null)
+                setDraftH(null)
+              }
+            }}
           />
         </div>
       </div>

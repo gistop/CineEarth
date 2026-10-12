@@ -2,10 +2,13 @@
 // One header per shot; the ACTIVE shot's channel rows (7 attributes + Growth)
 // render right below it in TimelineTracks when it is EXPANDED.
 //
+// Two entries, two intents: the CARET (a real button with a wide hit strip)
+// alone folds/unfolds the detail rows — pure view; the header BODY activates
+// the shot (setActiveShot, semantics unchanged from before the split).
+//
 // "Active" (editing semantics — the shot the whole app follows) and
 // "expanded" (visual only) are DECOUPLED: the active shot can be collapsed
-// (all headers = a pure storyboard view); clicking the active header toggles
-// it, clicking another header switches & expands.
+// (all headers = a pure storyboard view).
 //
 // ALIGNMENT: the row mirrors .ce-track's geometry (same --ce-row-grid columns,
 // gap and key-room padding), so it is just another row in the same stack —
@@ -24,15 +27,17 @@ type ShotTrackProps = {
   /** editing semantics — highlights the header of the shot the app follows */
   active: boolean
   /** visual only — the active shot can be COLLAPSED (its channel rows hidden)
-   *  while still being the one every consumer edits: 点头行 = toggle 展开 */
+   *  while still being the one every consumer edits: 点三角 = 展开/收拢 */
   expanded: boolean
   /** the longest shot's duration — blocks are sized relative to it */
   maxDur: number
-  /** click the row: active → toggle expand/collapse, else → switch & expand */
-  onToggle: () => void
+  /** caret click — fold/unfold the detail rows (pure view, the ONLY entry) */
+  onToggleExpand: () => void
+  /** header-body click — activate the shot (setActiveShot, semantics unchanged) */
+  onActivate: () => void
 }
 
-export default function ShotTrack({ shot, active, expanded, maxDur, onToggle }: ShotTrackProps) {
+export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpand, onActivate }: ShotTrackProps) {
   const removeShot = useRoute((s) => s.removeShot)
   const renameShot = useRoute((s) => s.renameShot)
   const deletable = useRoute((s) => s.shots.length > 1)
@@ -50,19 +55,27 @@ export default function ShotTrack({ shot, active, expanded, maxDur, onToggle }: 
       className={`ce-shot${active ? ' is-active' : ''}`}
       role="button"
       tabIndex={0}
-      title={`时长 ${dur.toFixed(1)}s · 双击名字重命名${
-        active ? (expanded ? ' · 点击收起' : ' · 点击展开') : ' · 点击切换编辑'
-      }`}
-      onClick={onToggle}
+      title={`时长 ${dur.toFixed(1)}s · 双击名字重命名 · 点击切换编辑该机位（三角 = 展开或收起详细轨道）`}
+      onClick={onActivate}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onToggle()
+        if (e.key === 'Enter') onActivate()
       }}
     >
       <div className="ce-shot-side">
-        <span
+        <button
+          type="button"
           className={`ce-shot-caret${expanded ? ' is-open' : ''}`}
-          aria-hidden="true"
-        >▸</span>
+          title={expanded ? '收起详细轨道' : '展开详细轨道'}
+          aria-label={`${expanded ? '收起' : '展开'} ${shot.name} 的详细轨道`}
+          aria-expanded={expanded}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleExpand()
+          }}
+          /* Enter on the focused caret must fold, not fall through to the
+             row's onKeyDown (which activates) via bubbling */
+          onKeyDown={(e) => e.stopPropagation()}
+        >▸</button>
         {editing ? (
           <input
             className="ce-shot-rename"

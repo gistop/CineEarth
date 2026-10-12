@@ -9,6 +9,9 @@ const TL_H_MIN = 140
 const clampTlHeight = (h: number) =>
   Math.round(Math.min(Math.max(h, TL_H_MIN), window.innerHeight))
 
+/** even, clamped pixel size — H.264 needs even dimensions anyway */
+const clampOut = (n: number) => 2 * Math.round(Math.min(Math.max(n, 16), 7680) / 2)
+
 export type DrawerTab = 'layers' | 'shots' | 'properties' | 'assets'
 
 /** how the chrome relates to the stage — see UIState.layoutMode */
@@ -59,6 +62,13 @@ interface UIState {
    *  on the editor (挤压窗口，不挤压画幅). */
   layoutMode: LayoutMode
 
+  /** output picture size (px) — ONE source of truth for BOTH the on-screen
+   *  frame ratio (fed onto .ce-stage as --ce-out-w/h: monitor letterbox +
+   *  editor GES mask) and the encoded video size (recorder outputSize).
+   *  Defaults mirror the GES 1080p preset; the project 设置 column edits it. */
+  outW: number
+  outH: number
+
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
   toggleRightDrawer: (open?: boolean) => void
@@ -76,6 +86,7 @@ interface UIState {
   toggleTlKeyValues: (id: string) => void
   setLaneBars: (on: boolean) => void
   setLayoutMode: (m: LayoutMode) => void
+  setOutSize: (w: number, h: number) => void
 
   /** interface theme (Props tab) — style-only, applied via [data-theme] */
   theme: ThemeId
@@ -99,6 +110,8 @@ export const useUI = create<UIState>((set) => ({
   tlKeyValues: {},
   laneBars: true,
   layoutMode: 'push',
+  outW: 1920,
+  outH: 1080,
 
   theme: loadTheme(),
   setTheme: (t) => set({ theme: t }),
@@ -123,4 +136,5 @@ export const useUI = create<UIState>((set) => ({
     set((s) => ({ tlKeyValues: { ...s.tlKeyValues, [id]: !s.tlKeyValues[id] } })),
   setLaneBars: (on) => set({ laneBars: on }),
   setLayoutMode: (m) => set({ layoutMode: m }),
+  setOutSize: (w, h) => set({ outW: clampOut(w), outH: clampOut(h) }),
 }))

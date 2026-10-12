@@ -50,11 +50,13 @@ const FOLLOW_MS: Record<PaneVariant, number> = { pane: 50, thumb: 100, program: 
  *  moving between the main grid and the rail only re-dials its existing
  *  Viewer — rebuilding it would flash and re-fetch tiles on every double
  *  click (主/次 归属切换). */
-const QUALITY: Record<PaneVariant, { scale: number; sse: number; cache: number }> = {
-  pane: { scale: 0.85, sse: 3, cache: 80 },
-  thumb: { scale: 0.55, sse: 5, cache: 40 },
-  /* Program Out is what the export will look like — the best of the panes */
-  program: { scale: 0.9, sse: 3, cache: 100 },
+const QUALITY: Record<PaneVariant, { scale: number; sse: number; cache: number; msaa: number }> = {
+  pane: { scale: 0.85, sse: 3, cache: 80, msaa: 1 },
+  thumb: { scale: 0.55, sse: 5, cache: 40, msaa: 1 },
+  /* Program Out is the finished-picture jury — FULL quality, matching the
+     editor's main globe (scale 1 / SSE 2 / MSAA 4x). No shortcuts here: a
+     soft Program Out misleads the framing verdict. */
+  program: { scale: 1, sse: 2, cache: 100, msaa: 4 },
 }
 
 function applyQuality(v: Viewer, variant: PaneVariant): void {
@@ -62,6 +64,7 @@ function applyQuality(v: Viewer, variant: PaneVariant): void {
   v.resolutionScale = q.scale
   v.scene.globe.maximumScreenSpaceError = q.sse
   v.scene.globe.tileCacheSize = q.cache
+  v.scene.msaaSamples = q.msaa
 }
 
 /** 'program' — a source key that can never collide with a shot id */
@@ -157,7 +160,6 @@ function ShotPane({
        the export can resolve it without touching the React tree */
     if (followProgram) setProgramViewer(v)
     applyQuality(v, variantRef.current)
-    scene.msaaSamples = 1
     /* follow the shared imagery source: a swap (ion AERIAL landing, or a new
        token) re-dials this pane too — no creation-order races */
     const unsubImagery = bindImagery(v)
@@ -331,6 +333,8 @@ export default function ViewportStage() {
   const drawerOpen = useUI((s) => s.drawerOpen)
   const rightDrawerOpen = useUI((s) => s.rightDrawerOpen)
   const rendering = useExport((s) => s.status === 'rendering')
+  const outW = useUI((s) => s.outW)
+  const outH = useUI((s) => s.outH)
   const setActiveShot = useRoute((s) => s.setActiveShot)
   const toggleMinimizedShot = useRoute((s) => s.toggleMinimizedShot)
 
@@ -403,6 +407,11 @@ export default function ViewportStage() {
               '--ce-push-l': drawerOpen ? 'var(--ce-drawer-w)' : '0px',
               '--ce-push-r': rightDrawerOpen ? 'var(--ce-drawer-w)' : '0px',
               '--ce-push-b': 'var(--ce-tl-h)',
+              /* the live output frame ratio — the 尺寸 setting drives this
+                 (tokens.css keeps only a first-paint fallback). Same source
+                 as the recorder's encode size, so screen and file agree */
+              '--ce-out-w': String(outW),
+              '--ce-out-h': String(outH),
             } as CSSProperties)
           : undefined
       }

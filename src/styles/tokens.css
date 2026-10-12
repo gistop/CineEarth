@@ -63,8 +63,11 @@
   --ce-tl-collapsed: 48px;
   --ce-tl-expanded: 232px;
 
-  /* output picture aspect (W/H). In push layout every monitor is letterboxed
-     to this ratio, so squeezing the window never squeezes the picture */
+  /* output picture aspect FALLBACK (W/H). The live value is fed from the
+     project 尺寸 setting (ui.outW/outH → .ce-stage inline vars); this only
+     covers the first paint before React lands the inline vars. In push layout
+     every monitor is letterboxed to this ratio, so squeezing the window never
+     squeezes the picture */
   --ce-out-w: 16;
   --ce-out-h: 9;
 }

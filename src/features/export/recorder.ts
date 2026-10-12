@@ -17,6 +17,12 @@ export type RecordPath = {
 
 export type RecordOptions = {
   canvas: HTMLCanvasElement
+  /** target ENCODED size (px) — from the project 尺寸 setting. The canvas may
+   *  differ (window size × DPR × quality scale): each frame is rescaled to
+   *  fit, aspect-preserving and centred on black. In push layout the canvas
+   *  ratio already equals this ratio (same source of truth), so it is a pure
+   *  resize with no bars. Absent → encode at the canvas' own size (legacy). */
+  outputSize?: { width: number; height: number }
   path: RecordPath
   waitTilesLoaded: () => Promise<void>
   renderFrame: () => void
@@ -69,9 +75,23 @@ export async function recordVideo(options: RecordOptions): Promise<Blob> {
   }
 
   // H.264 needs even dimensions
-  const width = Math.floor(canvas.width / 2) * 2
-  const height = Math.floor(canvas.height / 2) * 2
+  const out = options.outputSize
+  const width = Math.floor((out?.width ?? canvas.width) / 2) * 2
+  const height = Math.floor((out?.height ?? canvas.height) / 2) * 2
   if (width < 2 || height < 2) throw new Error('画布尺寸无效，无法录制')
+
+  /* rescale stage — created only when the canvas isn't already the encode
+     size (push layout usually lands exactly on it via the 尺寸 setting) */
+  let frameSource: HTMLCanvasElement = canvas
+  let fx: CanvasRenderingContext2D | null = null
+  if (width !== canvas.width || height !== canvas.height) {
+    frameSource = document.createElement('canvas')
+    frameSource.width = width
+    frameSource.height = height
+    fx = frameSource.getContext('2d')
+    if (!fx) throw new Error('无法创建缩放画布，无法录制')
+    fx.fillStyle = '#000'
+  }
 
   const fps = Math.max(1, Math.round(path.fps))
   const frameCount = Math.max(2, Math.round(path.frameCount))
@@ -105,7 +125,17 @@ export async function recordVideo(options: RecordOptions): Promise<Blob> {
       renderFrame()
       onProgress?.(frame + 1, frameCount)
 
-      const videoFrame = new VideoFrame(canvas, {
+      if (fx) {
+        /* aspect-preserving fit, centred on black — never stretch the frame.
+           Push layout makes this stretch-to-fill (canvas ratio == output) */
+        const s = Math.min(width / canvas.width, height / canvas.height)
+        const dw = canvas.width * s
+        const dh = canvas.height * s
+        fx.fillRect(0, 0, width, height)
+        fx.drawImage(canvas, (width - dw) / 2, (height - dh) / 2, dw, dh)
+      }
+
+      const videoFrame = new VideoFrame(frameSource, {
         timestamp: Math.round(frame * usPerFrame),
         duration: Math.round(usPerFrame),
       })

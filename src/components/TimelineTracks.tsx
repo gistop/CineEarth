@@ -496,13 +496,16 @@ export default function TimelineTracks() {
      once — DAW-style vertical stacking — and switching the active shot never
      touches anyone's expansion. Editing stays single-shot: only the ACTIVE
      shot's rows accept gestures (its actions write through the active route);
-     the other shots' rows render read-only — see ChannelTrack's readOnly. */
+     the other shots' rows render read-only — see ChannelTrack's readOnly.
+     ENTRY SPLIT: the CARET alone folds/unfolds (pure view, nothing else);
+     the header body keeps its original semantics — activate the shot
+     (setActiveShot: activation IS the director's cut at the playhead). */
   const [expandedShotIds, setExpandedShotIds] = useState<ReadonlySet<string>>(() => {
     const id = useRoute.getState().activeShotId
     return new Set(id ? [id] : [])
   })
-  const toggleShot = (id: string) => {
-    if (id !== activeShotId) useRoute.getState().setActiveShot(id)
+  /** caret only — fold/unfold the detail rows (pure view) */
+  const toggleExpand = (id: string) => {
     /* collapsing the shot that owns curve mode leaves curve mode — its rows
        unmount, a solo pointing into them would blank the lane column */
     if (id === activeShotId && expandedShotIds.has(id) && solo) setSolo(null)
@@ -512,6 +515,10 @@ export default function TimelineTracks() {
       else next.add(id)
       return next
     })
+  }
+  /** header body — same as before the split: activate (and cut at playhead) */
+  const activateShot = (id: string) => {
+    if (id !== activeShotId) useRoute.getState().setActiveShot(id)
   }
 
   /** unified key selection (wp:<i> | gr:<id>) shared by every track */
@@ -1491,7 +1498,8 @@ export default function TimelineTracks() {
             active={shot.id === activeShotId}
             expanded={expandedShotIds.has(shot.id)}
             maxDur={maxShotDur}
-            onToggle={() => toggleShot(shot.id)}
+            onToggleExpand={() => toggleExpand(shot.id)}
+            onActivate={() => activateShot(shot.id)}
           />
           {expandedShotIds.has(shot.id) &&
             renderChannelRows(shot, shot.id === activeShotId)}
