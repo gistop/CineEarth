@@ -483,6 +483,39 @@ function zoomAtView(
   set({ start, span })
 }
 
+/** 切镜联动 toggle — the chain icon on the 主输出 header. ON (default,
+ *  🔗): activating a shot also cuts the program at the playhead (导播式：
+ *  切换即剪辑). OFF (broken chain): activation is pure edit-target
+ *  switching — the program timeline is left untouched. The reader lives in
+ *  routeStore.setActiveShot, so EVERY activation entry obeys it at once. */
+function CutLinkBtn() {
+  const on = useUI((s) => s.cutLink)
+  const toggle = useUI((s) => s.toggleCutLink)
+  return (
+    <button
+      type="button"
+      className={`ce-cutlink${on ? ' is-on' : ''}`}
+      aria-pressed={on}
+      title={on ? '可切镜' : '不切镜'}
+      onClick={() => toggle()}
+    >
+      {/* two IDENTICAL chain links, same size in both states — linked
+          (interlocked on the diagonal) vs broken (pulled apart, gap only) */}
+      {on ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+          <rect x="-5.5" y="-3.25" width="11" height="6.5" rx="3.25" transform="translate(8 16) rotate(45)" />
+          <rect x="-5.5" y="-3.25" width="11" height="6.5" rx="3.25" transform="translate(16 8) rotate(45)" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+          <rect x="-5.5" y="-3.25" width="11" height="6.5" rx="3.25" transform="translate(6.2 17.8) rotate(45)" />
+          <rect x="-5.5" y="-3.25" width="11" height="6.5" rx="3.25" transform="translate(17.8 6.2) rotate(45)" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 export default function TimelineTracks() {
   /* ONE selected channel drives the LANE column only: the label column always
      renders every row (so the track list never re-flows), while the lanes area
@@ -1448,6 +1481,7 @@ export default function TimelineTracks() {
             title="主输出编排 — 单击任意机位即在播放头落下剪辑点；拖动边界精修切换时间，单击边界删除（两段合并）"
           >
             <span className="ce-track-name">主输出</span>
+            <CutLinkBtn />
             <span className="ce-track-value">
               {program.length ? `${program.length} 次切换` : '未编排'}
             </span>

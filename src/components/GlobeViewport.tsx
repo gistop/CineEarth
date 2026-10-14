@@ -10,7 +10,7 @@ import {
 import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { useExport } from '../features/export/exportStore'
-import { applyFraming, currentCameraAsFreeCam, sameFraming } from '../features/route/framing'
+import { applyFraming, currentCameraAsFreeCam, isProgrammaticFraming, pinOutputExtent, sameFraming } from '../features/route/framing'
 import { setViewer } from '../cesium/viewerRegistry'
 import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
 import { bootstrapIonSettings } from '../features/settings/ionTerrain'
@@ -77,12 +77,39 @@ export default function GlobeViewport() {
         if (ui.playing || ui.scrubbing || ui.cameraLocked) return
         const r = useRoute.getState()
         const cam = currentCameraAsFreeCam(viewer)
+        /* the program's own setView echo (activation restore / seek follow)
+           is not a user framing — keep it out of the memory, else one seek
+           would silently overwrite the shot's saved edit view */
+        if (isProgrammaticFraming(cam)) return
         if (r.activeShotId == null) return
         const shot = r.shots.find((sh) => sh.id === r.activeShotId)
         if (!shot || sameFraming(shot.freeCam, cam)) return
         r.setFreeCam(r.activeShotId, cam)
       }
       viewer.camera.moveEnd.addEventListener(onMoveEnd)
+
+      /* GES extent pin: the editor canvas is full-bleed, so its ratio wanders
+         with the layout (timeline expand/collapse, drawers, window resize).
+         Keeps the OUTPUT frame's ground extent invariant — the widened strips
+         are pure out-of-frame content for the mask to darken; letterbox modes
+         (overlay layout / rendering / preview) restore the base fov. */
+      const pin = pinOutputExtent(viewer, () => {
+        const ui = useUI.getState()
+        if (ui.layoutMode !== 'push' || ui.previewMode) return null
+        if (useExport.getState().status === 'rendering') return null
+        return ui.outW / ui.outH
+      })
+      /* pin CONDITIONS are store state — a change re-pins immediately */
+      const unsubPinUi = useUI.subscribe((s, prev) => {
+        if (
+          s.outW !== prev.outW ||
+          s.outH !== prev.outH ||
+          s.layoutMode !== prev.layoutMode ||
+          s.previewMode !== prev.previewMode
+        ) {
+          pin.refresh()
+        }
+      })
 
       /* ion bridge: stored token → terrain → imagery. All three live in
          ionTerrain.ts so that changing the token rebuilds both the terrain
@@ -122,6 +149,8 @@ export default function GlobeViewport() {
 
       return () => {
         unsubImagery()
+        pin.off()
+        unsubPinUi()
         viewer?.camera.moveEnd.removeEventListener(onMoveEnd)
         handler.destroy()
         setViewer(null)

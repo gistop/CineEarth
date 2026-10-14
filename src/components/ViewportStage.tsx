@@ -30,7 +30,7 @@ import { getViewer, setProgramRefresh, setProgramViewer } from '../cesium/viewer
 import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
 import { useUI } from '../store/ui'
 import { useExport } from '../features/export/exportStore'
-import { applyFraming, frameOf } from '../features/route/framing'
+import { applyFraming, frameOf, pinOutputExtent, stageFramingOf, type OutputExtentPin } from '../features/route/framing'
 import { programShotAt, useRoute } from '../features/route/routeStore'
 import { hasPosition } from '../features/route/types'
 import { buildShotRouteEntities } from '../features/route/routeEntities'
@@ -51,7 +51,15 @@ const FOLLOW_MS: Record<PaneVariant, number> = { pane: 50, thumb: 100, program: 
  *  Viewer — rebuilding it would flash and re-fetch tiles on every double
  *  click (主/次 归属切换). */
 const QUALITY: Record<PaneVariant, { scale: number; sse: number; cache: number; msaa: number }> = {
-  pane: { scale: 0.85, sse: 3, cache: 80, msaa: 1 },
+  /* 监视窗 = FULL quality, identical to the editor's main globe. The editor
+     overlay and a monitor pane are two displayers of the SAME shot, and any
+     dial difference between them showed up as the picture "changing" the
+     moment a shot won or lost activation. The cost is real — MSAA 4x is
+     roughly 4× the fill bandwidth and memory per live view, SSE 2 pulls
+     finer tiles — so many shots at once is where this hurts (the old
+     0.85/SSE3/no-MSAA dial existed to make 8+ live views viable). */
+  pane: { scale: 1, sse: 2, cache: 100, msaa: 4 },
+  /* the rail thumbs stay deliberately cheap: tiny canvases, glance-only */
   thumb: { scale: 0.55, sse: 5, cache: 40, msaa: 1 },
   /* Program Out is the finished-picture jury — FULL quality, matching the
      editor's main globe (scale 1 / SSE 2 / MSAA 4x). No shortcuts here: a
@@ -93,6 +101,8 @@ function ShotPane({
   const variantRef = useRef(variant)
   /** the live Viewer — owned by the mount effect, read by the dial effects */
   const viewerRef = useRef<Viewer | null>(null)
+  /** GES extent pin — owned by the mount effect, nudged by the variant effect */
+  const pinRef = useRef<OutputExtentPin | null>(null)
   /** filled by the mount effect — one-shot catch-up on unmute */
   const refreshRef = useRef<() => void>(() => {})
 
@@ -117,6 +127,8 @@ function ShotPane({
     const v = viewerRef.current
     if (!v || v.isDestroyed()) return
     applyQuality(v, variant)
+    /* pane ↔ thumb flips the pin ON/OFF (ratio() checks the variant) */
+    pinRef.current?.refresh()
     v.scene.requestRender()
   }, [variant])
 
@@ -152,7 +164,7 @@ function ShotPane({
       return
     }
 
-    /* ---- quality dial: panes/thumbs pay a fraction of the main cost ---- */
+    /* ---- quality dial: monitors match the editor, rail thumbs pay less ---- */
     const v = viewer
     const scene = v.scene
     viewerRef.current = v
@@ -160,6 +172,28 @@ function ShotPane({
        the export can resolve it without touching the React tree */
     if (followProgram) setProgramViewer(v)
     applyQuality(v, variantRef.current)
+    /* GES extent pin (framing.ts): a monitor pane keeps its OUTPUT-frame
+       ground extent invariant while the layout reshapes its canvas (timeline
+       expand/collapse, drawers, window resize). Monitor panes only — Program
+       Out letterboxes by design and rail thumbs are letterboxes too. */
+    const pin = pinOutputExtent(v, () => {
+      if (variantRef.current !== 'pane') return null
+      const ui = useUI.getState()
+      if (ui.layoutMode !== 'push' || ui.previewMode) return null
+      if (useExport.getState().status === 'rendering') return null
+      return ui.outW / ui.outH
+    })
+    pinRef.current = pin
+    const unsubPinUi = useUI.subscribe((s, prev) => {
+      if (
+        s.outW !== prev.outW ||
+        s.outH !== prev.outH ||
+        s.layoutMode !== prev.layoutMode ||
+        s.previewMode !== prev.previewMode
+      ) {
+        pin.refresh()
+      }
+    })
     /* follow the shared imagery source: a swap (ion AERIAL landing, or a new
        token) re-dials this pane too — no creation-order races */
     const unsubImagery = bindImagery(v)
@@ -207,23 +241,37 @@ function ShotPane({
       entities = buildShotRouteEntities(v, shot)
     }
 
-    const applyFramingNow = () => {
+    /** the playhead is PARKED when neither playback nor scrubbing drives it —
+     *  a parked monitor shows the shot's saved edit view, not the route pose */
+    const isParked = () => {
+      const ui = useUI.getState()
+      return !ui.playing && !ui.scrubbing
+    }
+
+    const applyFramingNow = (parked: boolean) => {
       const s = useRoute.getState()
       const sid = followProgram ? programShotAt(s.program, s.progress) : shotId ?? null
       if (!sid) return
       const shot = s.shots.find((sh) => sh.id === sid)
       if (!shot) return
-      /* the ONE framing rule: route pose at the playhead → freeCam memory →
-         HOME (never Cesium's raw space view) */
-      applyFraming(v, frameOf(shot, s.progress))
+      /* the editor window and a monitor must AGREE on how a shot looks:
+         parked → the shot's saved edit view (freeCam), the very framing the
+         editor restores when it takes the slot over; playing/scrubbing → the
+         route pose at the playhead. 主输出 always follows the route — it IS
+         the finished frame. HOME is the floor either way (never Cesium's raw
+         space view). */
+      const f = followProgram
+        ? frameOf(shot, s.progress)
+        : stageFramingOf(shot, s.progress, parked)
+      applyFraming(v, f)
     }
 
     rebuild()
-    applyFramingNow()
+    applyFramingNow(isParked())
     if (!mutedRef.current) scene.requestRender()
     refreshRef.current = () => {
       rebuild()
-      applyFramingNow()
+      applyFramingNow(isParked())
       scene.requestRender()
     }
     /* the exporter takes the Program Out Viewer over frame-by-frame while
@@ -237,29 +285,31 @@ function ShotPane({
      *  end up showing DIFFERENT moments of the same shot at the same playhead
      *  (their lastApply clocks are independent). */
     let trailing: number | null = null
-    const applyNow = () => {
+    const applyNow = (parked: boolean) => {
       if (trailing != null) {
         clearTimeout(trailing)
         trailing = null
       }
       lastApply = performance.now()
-      applyFramingNow()
+      applyFramingNow(parked)
       scene.requestRender()
     }
-    /** throttled apply with a trailing catch-up; force skips the budget */
-    const applyThrottled = (force = false) => {
+    /** throttled apply with a trailing catch-up; force skips the budget.
+     *  `parked` rides through: a playhead-driven apply FOLLOWS the route,
+     *  an init/source-swap apply shows the shot's saved edit view */
+    const applyThrottled = (force = false, parked = isParked()) => {
       const now = performance.now()
       const budget = FOLLOW_MS[variantRef.current]
       if (!force && now - lastApply < budget) {
         if (trailing == null) {
           trailing = window.setTimeout(() => {
             trailing = null
-            applyNow()
+            applyNow(parked)
           }, budget - (now - lastApply))
         }
         return
       }
-      applyNow()
+      applyNow(parked)
     }
 
     const unsub = useRoute.subscribe((s, prev) => {
@@ -284,7 +334,8 @@ function ShotPane({
         return
       }
       if (s.progress !== prev.progress) {
-        applyThrottled()
+        /* the playhead drives the picture (tick, scrub or seek) — follow it */
+        applyThrottled(false, false)
         return
       }
       const shot = s.shots.find((sh) => sh.id === shotId)
@@ -297,6 +348,9 @@ function ShotPane({
 
     return () => {
       unsubImagery()
+      pin.off()
+      pinRef.current = null
+      unsubPinUi()
       unsub()
       if (trailing != null) clearTimeout(trailing)
       viewerRef.current = null
@@ -391,11 +445,14 @@ export default function ViewportStage() {
      .ce-frame in ui.css. */
   const push = layoutMode === 'push' && !previewMode
 
-  /* GES-style editor window: in push (and not exporting) the editor canvas
-     stays FULL-BLEED with a darkened surround outside the output frame
-     (.ce-frame-mask in ui.css). While rendering the editor letterboxes like
-     a monitor, so the canvas being recorded is exactly the picture. */
-  const editorScope = push && !rendering
+  /* GES scope framing — shared by the EDITOR overlay and every monitor pane:
+     in push (and not exporting) those canvases stay FULL-BLEED with a darkened
+     surround outside the output frame (.ce-frame-mask in ui.css), so the whole
+     grid reads as ONE family — only 主输出 keeps letterbox, the honest,
+     uncluttered picture of the finished frame. While rendering everything
+     letterboxes like a monitor, so any recorded canvas is exactly the
+     picture. */
+  const gesScope = push && !rendering
 
   return (
     <div
@@ -438,8 +495,12 @@ export default function ViewportStage() {
         )}
         {mainIds.map((id, i) => (
           <div key={id} className="ce-slot" data-shot-id={id} style={{ gridArea: slotArea(i) }}>
-            <div className="ce-frame">
+            {/* monitors share the editor's GES framing: the whole grid reads
+                as one family; only 主输出 keeps letterbox (the honest,
+                uncluttered picture of the finished frame) */}
+            <div className={`ce-frame${gesScope ? ' is-scope' : ''}`}>
               <ShotPane shotId={id} variant="pane" muted={id === activeId} />
+              {gesScope && <span className="ce-frame-mask" aria-hidden="true" />}
             </div>
             {/* the active slot's OWN chip comes from the overlay below (this
                 one would sit underneath it) */}
@@ -463,14 +524,14 @@ export default function ViewportStage() {
             No active shot (edit target cleared) → no overlay, pure monitors. */}
         {activeId != null && (
           <div className="ce-slot ce-slot-main" data-shot-id={activeId} style={{ gridArea: activeArea }}>
-            <div className={`ce-frame${editorScope ? ' is-scope' : ''}`}>
+            <div className={`ce-frame${gesScope ? ' is-scope' : ''}`}>
               <GlobeViewport />
-              {editorScope && <span className="ce-frame-mask" aria-hidden="true" />}
+              {gesScope && <span className="ce-frame-mask" aria-hidden="true" />}
             </div>
             {!previewMode && (
               <>
                 <span
-                  className={`ce-pane-chip${hasWaypoints(activeId) ? '' : ' is-empty'}`}
+                  className={`ce-pane-chip is-active${hasWaypoints(activeId) ? '' : ' is-empty'}`}
                   title={hasWaypoints(activeId) ? undefined : '该机位尚无航点 — 点击主视图绘制航线'}
                 >
                   {nameOf(activeId)}

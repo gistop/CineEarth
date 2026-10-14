@@ -204,6 +204,15 @@
   color: var(--ce-text-2);
   pointer-events: none;
 }
+/* the ACTIVE shot's chip (the overlay copy riding on the editor window):
+   accent FILL marks the window you are editing — the monitor row reads at
+   a glance (监视窗 stay translucent). 主输出 keeps its outline-only
+   is-program style: same family, two ranks (fill = edit, outline = judge). */
+.ce-pane-chip.is-active {
+  background: var(--ce-accent);
+  border-color: var(--ce-accent);
+  color: var(--ce-on-accent);
+}
 
 /* empty-shot indicator: a shot with no position waypoints yet shows an amber
    dot next to its name (both on pane chips and thumb name rows) — the framing
@@ -1508,6 +1517,44 @@
   line-height: 1.1;
   color: var(--ce-text-2);
   white-space: nowrap;
+}
+/* 切镜联动 toggle — HUGGING 主输出: a suffix of the name, never a glyph
+   floating between name and count (that read as part of 未编排). The label
+   row is space-between, so margin-right:auto swallows the slack — name and
+   chain stay glued left (label gap 8px − 2px = 6px visual) while the count
+   keeps the right edge.
+   ON (linked chain, accent) = activating also cuts at the playhead; OFF
+   (broken chain, quiet grey) = activation is pure edit-target switching.
+   Never reads as play/pause: it is a chain, not a lock or transport glyph */
+.ce-cutlink {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-left: -2px;
+  margin-right: auto;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ce-text-2);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.ce-cutlink:hover {
+  color: var(--ce-accent);
+  /* faint chip — reads as a BUTTON, not a stray glyph */
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 4px;
+}
+.ce-cutlink.is-on {
+  color: var(--ce-accent);
+}
+.ce-cutlink svg {
+  width: 12px;
+  height: 12px;
 }
 /* insert-keyframe button — VISUAL ONLY for now. A hollow keyframe diamond
    (same 7px rotated square as the lane keys) that fills on hover; quiet

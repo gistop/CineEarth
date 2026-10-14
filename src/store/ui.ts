@@ -69,6 +69,14 @@ interface UIState {
   outW: number
   outH: number
 
+  /** 切镜联动 (the 🔗 toggle on the 主输出 track header). true (default) =
+   *  activating a shot also cuts the program at the playhead (导播式：切换
+   *  即剪辑); false = activation is PURE edit-target switching — the program
+   *  timeline is left untouched (browse/edit without polluting the cut).
+   *  routeStore.setActiveShot is the single reader, so every activation
+   *  entry (track row, monitor pane, rail thumb) obeys it at once. */
+  cutLink: boolean
+
   toggleDrawer: (open?: boolean) => void
   setDrawerTab: (tab: DrawerTab) => void
   toggleRightDrawer: (open?: boolean) => void
@@ -87,6 +95,7 @@ interface UIState {
   setLaneBars: (on: boolean) => void
   setLayoutMode: (m: LayoutMode) => void
   setOutSize: (w: number, h: number) => void
+  toggleCutLink: (on?: boolean) => void
 
   /** interface theme (Props tab) — style-only, applied via [data-theme] */
   theme: ThemeId
@@ -112,6 +121,7 @@ export const useUI = create<UIState>((set) => ({
   layoutMode: 'push',
   outW: 1920,
   outH: 1080,
+  cutLink: true,
 
   theme: loadTheme(),
   setTheme: (t) => set({ theme: t }),
@@ -137,4 +147,5 @@ export const useUI = create<UIState>((set) => ({
   setLaneBars: (on) => set({ laneBars: on }),
   setLayoutMode: (m) => set({ layoutMode: m }),
   setOutSize: (w, h) => set({ outW: clampOut(w), outH: clampOut(h) }),
+  toggleCutLink: (on) => set((s) => ({ cutLink: on ?? !s.cutLink })),
 }))

@@ -18,7 +18,7 @@ import {
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
-import { applyFraming, frameOf } from './framing'
+import { applyFraming, stageFramingOf } from './framing'
 import {
   haversineM,
   samplePath,
@@ -245,23 +245,33 @@ export default function RouteSceneBridge() {
     [],
   )
 
-  /* 机位切换 → restore THE SHOT'S framing. The camera used to be one global
-     shared state, so activating a fresh shot silently inherited the previous
-     shot's view. Now every activation resolves this shot's own framing:
-     route pose at the playhead → freeCam memory → HOME. Skipped while the
-     camera is locked (the user is holding the viewpoint on purpose) or while
-     the offline renderer owns the camera. */
+  /* 机位切换 → restore THE SHOT'S EDIT VIEW. Switching the edit target must
+     not disturb any shot's framing: what comes back is exactly what the user
+     left there — the shot's freeCam memory (recorded on moveEnd), falling
+     back to the route pose at the playhead / HOME only for shots never framed
+     by hand. Scrub/seek follow (above) keeps resolving frameOf: those views
+     belong to the route. Skipped while the camera is locked (the user is
+     holding the viewpoint on purpose) or while the offline renderer owns the
+     camera. */
   useEffect(
     () =>
       useRoute.subscribe((s, prev) => {
         if (s.activeShotId === prev.activeShotId) return
         if (useExport.getState().status === 'rendering') return
-        if (useUI.getState().cameraLocked) return
+        const ui = useUI.getState()
+        if (ui.cameraLocked) return
         const viewer = getViewer()
         if (!viewer) return
         const shot = s.shots.find((sh) => sh.id === s.activeShotId)
         if (!shot) return
-        applyFraming(viewer, frameOf(shot, s.progress))
+        /* a cut DURING playback keeps following the route (the playhead owns
+           the picture while it runs); a parked playhead restores the shot's
+           saved edit view — the same rule the monitors obey, so the picture
+           cannot change just because activation moved */
+        applyFraming(
+          viewer,
+          stageFramingOf(shot, s.progress, !ui.playing && !ui.scrubbing),
+        )
       }),
     [],
   )

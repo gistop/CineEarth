@@ -8,6 +8,7 @@
 // the active id into the reveal store (per-shot growth keys).
 
 import { create } from 'zustand'
+import { useUI } from '../../store/ui'
 import { useReveal } from './revealStore'
 import {
   bearingDeg,
@@ -472,11 +473,17 @@ export const useRoute = create<RouteState>((set) => {
       if (!shot || id === s.activeShotId) return {}
       /* growth keys are per-shot: the reveal mirror follows the switch */
       useReveal.getState().setActiveShot(id)
-      /* 主输出: activating a shot IS the director's cut — from the CURRENT
-         playhead the program switches to it. A boundary sitting exactly at
-         the playhead is REPLACED; later boundaries survive (they keep
-         shaping the rest of the program); a cut onto the shot already on
-         air is a no-op. */
+      /* 切镜联动 (the 🔗 toggle on the 主输出 header): OFF = activation is
+         PURE edit-target switching — the program timeline stays untouched
+         (browse/edit shots without polluting the cut). */
+      if (!useUI.getState().cutLink) {
+        return { activeShotId: id, route: shot.route, selectedWaypointId: null }
+      }
+      /* ON (default): activating a shot IS the director's cut — from the
+         CURRENT playhead the program switches to it. A boundary sitting
+         exactly at the playhead is REPLACED; later boundaries survive (they
+         keep shaping the rest of the program); a cut onto the shot already
+         on air is a no-op. */
       const t = s.progress
       const eps = 1e-4
       const withoutAtT = s.program.filter((c) => Math.abs(c.t - t) >= eps)
