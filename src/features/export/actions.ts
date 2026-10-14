@@ -1,6 +1,6 @@
 // Export actions — glue between UI buttons, the viewer registry and the recorder.
 
-import { Cartesian3, Math as CesiumMath, PerspectiveFrustum, type Entity, type Viewer } from 'cesium'
+import { type Entity, type Viewer } from 'cesium'
 import { getProgramViewer, getViewer, refreshProgramViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
 import { samplePose, timelineDuration, timelineProgressToRoute } from '../route/pathMath'
@@ -14,17 +14,7 @@ import { createStamp, downloadBlob, recordVideo, type RecordPath } from './recor
 function applyPose(pose: Pose): void {
   const viewer = getViewer()
   if (!viewer) return
-  viewer.camera.setView({
-    destination: Cartesian3.fromDegrees(pose.lon, pose.lat, pose.height),
-    orientation: {
-      heading: CesiumMath.toRadians(pose.heading),
-      pitch: CesiumMath.toRadians(pose.pitch),
-      roll: CesiumMath.toRadians(pose.roll),
-    },
-  })
-  /* fov channel — deg → radians on the perspective frustum */
-  const frustum = viewer.camera.frustum
-  if (frustum instanceof PerspectiveFrustum) frustum.fov = CesiumMath.toRadians(pose.fov)
+  applyFraming(viewer, pose)
 }
 
 /** Screenshot: explicit render, then capture the canvas (UI overlays are DOM — never baked in). */

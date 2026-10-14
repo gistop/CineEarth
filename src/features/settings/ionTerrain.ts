@@ -19,6 +19,7 @@ import {
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { setImageryProvider } from '../../cesium/imagerySource'
+import { setTerrainProvider } from '../../cesium/terrainSource'
 import { useIon } from './ionTokenStore'
 
 /** asset 2 = Cesium World Imagery (asset 1 = World Terrain); any asset endpoint
@@ -78,15 +79,15 @@ export async function syncTerrain(): Promise<void> {
       applyIonToken(tokenKey)
       const provider = await createWorldTerrainAsync()
       if (seq !== syncSeq) return // superseded by a newer sync
-      viewer.terrainProvider = provider
+      setTerrainProvider(provider)
     } else {
-      viewer.terrainProvider = new EllipsoidTerrainProvider()
+      setTerrainProvider(new EllipsoidTerrainProvider())
     }
     lastMode = mode
     lastTokenKey = tokenKey
   } catch (err) {
     console.error('[CineEarth] world terrain failed to load', err)
-    if (seq === syncSeq) viewer.terrainProvider = new EllipsoidTerrainProvider()
+    if (seq === syncSeq) setTerrainProvider(new EllipsoidTerrainProvider())
     lastMode = 'ellipsoid'
     lastTokenKey = '-'
   }

@@ -38,10 +38,10 @@ export function frameOf(shot: Shot, progress: number): Pose | FreeCam | null {
  *  freeCam channels — sameFraming compares exactly those. */
 let lastProgrammatic: FreeCam | null = null
 
-/** the fov (degrees) the last programmatic applyFraming pinned — the BASE the
- *  GES extent pinner (pinOutputExtent) widens from. Never written by the
- *  pinner itself, so repeated frames cannot compound the widening. */
-let baseFovDeg = DEFAULT_FOV
+/** Per-viewer FOV at the output aspect, before GES overscan compensation.
+ *  Only applyFraming writes it, so viewers cannot affect each other's lens
+ *  and repeated frames cannot compound the widening. */
+const baseFovByViewer = new WeakMap<Viewer, number>()
 
 /** the framing a PARKED playhead shows for a shot: its saved edit view
  *  (freeCam). This is the exact view the editor window restores on activation,
@@ -93,7 +93,7 @@ export function applyFraming(viewer: Viewer, f: Pose | FreeCam | null): void {
   const frustum = viewer.camera.frustum
   if (frustum instanceof PerspectiveFrustum) {
     const fovDeg = f != null && 'fov' in f ? f.fov : DEFAULT_FOV
-    baseFovDeg = fovDeg
+    baseFovByViewer.set(viewer, fovDeg)
     frustum.fov = CesiumMath.toRadians(fovDeg)
   }
 }
@@ -136,13 +136,11 @@ export function isProgrammaticFraming(cam: FreeCam): boolean {
  *  frame's ground extent invariant while the canvas ratio wanders with the
  *  layout (timeline expand/collapse, drawers, window resize…).
  *
- *  HOW: the frustum aspect stays glued to the canvas (changing it would
- *  STRETCH the picture). Instead, when the canvas is TALLER than the output
- *  frame (A < T), the vertical fov is widened by T/A — the frame's inscribed
- *  rectangle then covers exactly the ground it would at A = T, and the extra
- *  top/bottom strips are pure out-of-frame content for the mask to darken. A
- *  canvas WIDER than the frame needs nothing: the frame spans the full canvas
- *  height, so its extent is already fov-locked (only the side strips grow).
+ *  HOW: Cesium's fov is horizontal for landscape canvases, vertical otherwise.
+ *  Convert the base FOV at output aspect T to a vertical half-angle tangent,
+ *  widen by max(1, T/A) for the inscribed frame at canvas aspect A, then
+ *  convert back to Cesium's FOV with max(1, A). The frustum aspect still
+ *  follows the canvas; only the masked surround gains extra content.
  *
  *  `ratio()` returns the output aspect (outW / outH) while GES scope is ON,
  *  and null while OFF (overlay letterbox / rendering / preview) — OFF restores
@@ -166,11 +164,13 @@ export function pinOutputExtent(
     const t = ratio()
     const w = viewer.canvas.clientWidth
     const h = viewer.canvas.clientHeight
-    let target = CesiumMath.toRadians(baseFovDeg)
+    const baseFov = CesiumMath.toRadians(baseFovByViewer.get(viewer) ?? DEFAULT_FOV)
+    let target = baseFov
     if (t != null && t > 0 && w >= 1 && h >= 1) {
-      const widen = Math.max(1, t / (w / h))
-      target =
-        2 * Math.atan(Math.tan(CesiumMath.toRadians(baseFovDeg) / 2) * widen)
+      const aspect = w / h
+      const outputTanHalfFovY = Math.tan(baseFov / 2) / Math.max(1, t)
+      const canvasTanHalfFovY = outputTanHalfFovY * Math.max(1, t / aspect)
+      target = 2 * Math.atan(canvasTanHalfFovY * Math.max(1, aspect))
     }
     const current = frustum.fov
     if (current == null || Math.abs(current - target) > 1e-12) {

@@ -15,6 +15,8 @@ import { setViewer } from '../cesium/viewerRegistry'
 import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
 import { bootstrapIonSettings } from '../features/settings/ionTerrain'
 import { syncSceneSettings } from '../features/settings/sceneSettings'
+import { applyViewportQuality } from '../cesium/viewportQuality'
+import { bindTerrain } from '../cesium/terrainSource'
 
 /**
  * The globe is an imperative island:
@@ -50,6 +52,10 @@ export default function GlobeViewport() {
         creditContainer: creditRef.current ?? undefined,
       })
       setViewer(viewer)
+      /* Keep the interactive editor at the same full quality as an expanded
+         shot pane. Activation must never make the picture sharper or softer. */
+      applyViewportQuality(viewer, 'editor')
+      const unsubTerrain = bindTerrain(viewer)
 
       /* imagery swaps (placeholder → ion AERIAL, or a token change) re-dial
          THIS globe through the shared source — same instance the panes use */
@@ -149,6 +155,7 @@ export default function GlobeViewport() {
 
       return () => {
         unsubImagery()
+        unsubTerrain()
         pin.off()
         unsubPinUi()
         viewer?.camera.moveEnd.removeEventListener(onMoveEnd)

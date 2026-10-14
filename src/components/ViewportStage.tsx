@@ -34,6 +34,8 @@ import { applyFraming, frameOf, pinOutputExtent, stageFramingOf, type OutputExte
 import { programShotAt, useRoute } from '../features/route/routeStore'
 import { hasPosition } from '../features/route/types'
 import { buildShotRouteEntities } from '../features/route/routeEntities'
+import { applyViewportQuality } from '../cesium/viewportQuality'
+import { bindTerrain } from '../cesium/terrainSource'
 import GlobeViewport from './GlobeViewport'
 
 /* ------------------------------------------------------------------ */
@@ -68,11 +70,7 @@ const QUALITY: Record<PaneVariant, { scale: number; sse: number; cache: number; 
 }
 
 function applyQuality(v: Viewer, variant: PaneVariant): void {
-  const q = QUALITY[variant]
-  v.resolutionScale = q.scale
-  v.scene.globe.maximumScreenSpaceError = q.sse
-  v.scene.globe.tileCacheSize = q.cache
-  v.scene.msaaSamples = q.msaa
+  applyViewportQuality(v, variant)
 }
 
 /** 'program' — a source key that can never collide with a shot id */
@@ -126,7 +124,7 @@ function ShotPane({
     variantRef.current = variant
     const v = viewerRef.current
     if (!v || v.isDestroyed()) return
-    applyQuality(v, variant)
+    applyViewportQuality(v, variant)
     /* pane ↔ thumb flips the pin ON/OFF (ratio() checks the variant) */
     pinRef.current?.refresh()
     v.scene.requestRender()
@@ -171,7 +169,7 @@ function ShotPane({
     /* the exporter renders THIS Viewer — register the Program Out monitor so
        the export can resolve it without touching the React tree */
     if (followProgram) setProgramViewer(v)
-    applyQuality(v, variantRef.current)
+    applyViewportQuality(v, variantRef.current)
     /* GES extent pin (framing.ts): a monitor pane keeps its OUTPUT-frame
        ground extent invariant while the layout reshapes its canvas (timeline
        expand/collapse, drawers, window resize). Monitor panes only — Program
@@ -214,12 +212,7 @@ function ShotPane({
 
     /* terrain provider SHARED with the main globe — one request storm, one
        decode pipeline; GPU textures stay per-viewer (Cesium constraint) */
-    try {
-      const main = getViewer()
-      if (main && !main.isDestroyed()) v.terrainProvider = main.terrainProvider
-    } catch {
-      /* main not up yet — ellipsoid terrain is fine for a cold pane */
-    }
+    const unsubTerrain = bindTerrain(v)
 
     /* ---- static per-shot entities: spline + waypoint dots + target halo.
        No CallbackProperty here — N panes × per-frame JS callbacks was the
@@ -348,6 +341,7 @@ function ShotPane({
 
     return () => {
       unsubImagery()
+      unsubTerrain()
       pin.off()
       pinRef.current = null
       unsubPinUi()
