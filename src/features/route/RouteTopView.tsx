@@ -121,13 +121,17 @@ const ghostStyle = new Style({
   }),
 })
 
-/* basemap choice — OSM ↔ keyless Esri World Imagery, kept across reloads */
+/* basemap choice — OSM ↔ keyless Esri World Imagery, kept across reloads.
+   Satellite is the DEFAULT: tile.openstreetmap.org times out on some
+   networks (console spam), so the street map is opt-in — OSM tiles are only
+   requested once someone actually switches to them. '0' = explicitly chose
+   streets; anything else (incl. legacy '1' and no record) = satellite. */
 const SAT_PREF_KEY = 'ce-topview-basemap-sat'
 function readSavedSat(): boolean {
   try {
-    return localStorage.getItem(SAT_PREF_KEY) === '1'
+    return localStorage.getItem(SAT_PREF_KEY) !== '0'
   } catch {
-    return false
+    return true
   }
 }
 
