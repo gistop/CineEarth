@@ -192,10 +192,43 @@ interface RouteState {
    *  from which playhead moment. Sorted by t; the last cut holds to the end.
    *  An empty program means nothing is 编排 yet. */
   program: ProgramCut[]
+  /** 轨道锁 (the padlock on the 主输出 header): ON refuses EVERY program
+   *  write — boundary drags, keyboard edits, drag-drop creation AND the
+   *  cut-link activation cut (a linked activation still switches the edit
+   *  target, it just doesn't cut). Browsing stays free. */
+  programLocked: boolean
+  /** the selected SEGMENT (index into `program`: cut i owns [t_i, t_i+1)).
+   *  The keyboard & dblclick commands address this segment; null = none. */
+  programSelection: number | null
+  /** program edit history — snapshots taken BEFORE each committed edit */
+  programPast: ProgramCut[][]
+  programFuture: ProgramCut[][]
+
   /** drag a boundary (rail handle) to a new playhead fraction */
   moveProgramCut: (index: number, t: number) => void
   /** remove a boundary — its segment merges back into the previous one */
   removeProgramCut: (index: number) => void
+  /** snapshot before a GESTURE edit series (boundary drag): the moves
+   *  themselves don't push, so one gesture = one undo step */
+  beginProgramEdit: () => void
+  /** add / replace a cut at t (drag-drop from a 机位 header, `P` at the
+   *  playhead) and select the new segment */
+  insertProgramCut: (shotId: string, t: number) => void
+  /** blade at t: split the owning segment in two (same 机位) and select the
+   *  tail, ready to relink via 数字键 / the dblclick menu */
+  splitProgramAt: (t: number) => void
+  /** magnetic delete: segment i's duration is removed and every later cut
+   *  shifts left (the program shrinks; nothing plays the deleted 机位) */
+  deleteProgramSeg: (index: number) => void
+  /** relink segment i to another 机位 (数字键 1-9 / the dblclick menu) */
+  setProgramSegShot: (index: number, shotId: string) => void
+  /** magnetic reorder: the boundary slots stay, the 机位 order swaps (the
+   *  segment's duration travels with its shot) */
+  reorderProgramSeg: (from: number, to: number) => void
+  selectProgramSeg: (index: number | null) => void
+  setProgramLocked: (on?: boolean) => void
+  undoProgram: () => void
+  redoProgram: () => void
 }
 
 export const useRoute = create<RouteState>((set) => {
@@ -210,6 +243,15 @@ export const useRoute = create<RouteState>((set) => {
           route,
           shots: s.shots.map((sh) => (sh.id === s.activeShotId ? { ...sh, route } : sh)),
         }
+
+  /** history wrapper — every COMMITTED program write goes through here
+   *  (discrete edits and the cut-link activation cut; gesture moves push
+   *  once via beginProgramEdit instead). 50-deep, branch-clearing. */
+  const commit = (s: RouteState, next: ProgramCut[]): Partial<RouteState> => ({
+    programPast: [...s.programPast.slice(-49), s.program],
+    programFuture: [],
+    program: next,
+  })
 
   const initialShot: Shot = {
     id: createShotId(),
@@ -228,6 +270,10 @@ export const useRoute = create<RouteState>((set) => {
   progress: 0,
   minimizedShotIds: [],
   program: [],
+  programLocked: false,
+  programSelection: null,
+  programPast: [],
+  programFuture: [],
 
   setRoute: (route) =>
     set((s) => ({ ...patch(s, normalizeRoute(route)), selectedWaypointId: null, progress: 0 })),
@@ -475,15 +521,18 @@ export const useRoute = create<RouteState>((set) => {
       useReveal.getState().setActiveShot(id)
       /* 切镜联动 (the 🔗 toggle on the 主输出 header): OFF = activation is
          PURE edit-target switching — the program timeline stays untouched
-         (browse/edit shots without polluting the cut). */
-      if (!useUI.getState().cutLink) {
+         (browse/edit shots without polluting the cut). The 轨道锁 has the
+         same effect: a locked lane refuses the cut too (the lock outranks
+         the link — UI greys the chain out while locked). */
+      if (!useUI.getState().cutLink || s.programLocked) {
         return { activeShotId: id, route: shot.route, selectedWaypointId: null }
       }
       /* ON (default): activating a shot IS the director's cut — from the
          CURRENT playhead the program switches to it. A boundary sitting
          exactly at the playhead is REPLACED; later boundaries survive (they
          keep shaping the rest of the program); a cut onto the shot already
-         on air is a no-op. */
+         on air is a no-op. The cut COMMITS to the program history (one
+         activation = one undo step). */
       const t = s.progress
       const eps = 1e-4
       const withoutAtT = s.program.filter((c) => Math.abs(c.t - t) >= eps)
@@ -498,7 +547,7 @@ export const useRoute = create<RouteState>((set) => {
         activeShotId: id,
         route: shot.route,
         selectedWaypointId: null,
-        program: mergeCuts([...withoutAtT, { t, shotId: id }]),
+        ...commit(s, mergeCuts([...withoutAtT, { t, shotId: id }])),
       }
     }),
   addShot: () =>
@@ -535,7 +584,9 @@ export const useRoute = create<RouteState>((set) => {
           route: next.route,
           selectedWaypointId: null,
           minimizedShotIds,
-          program: mergeCuts(s.program.filter((c) => c.shotId !== id)),
+          /* the program loses the deleted shot's segments (undoable) */
+          ...commit(s, mergeCuts(s.program.filter((c) => c.shotId !== id))),
+          programSelection: null,
         }
       }
       /* deleting a NON-active shot: keep the current edit target AS-IS — it
@@ -546,7 +597,8 @@ export const useRoute = create<RouteState>((set) => {
         route: s.route,
         selectedWaypointId: s.selectedWaypointId,
         minimizedShotIds,
-        program: mergeCuts(s.program.filter((c) => c.shotId !== id)),
+        ...commit(s, mergeCuts(s.program.filter((c) => c.shotId !== id))),
+        programSelection: null,
       }
     }),
   renameShot: (id, name) =>
@@ -576,6 +628,7 @@ export const useRoute = create<RouteState>((set) => {
     }),
   moveProgramCut: (index, t) =>
     set((s) => {
+      if (s.programLocked) return {}
       const cuts = s.program
       const c = cuts[index]
       if (!c) return {}
@@ -584,10 +637,138 @@ export const useRoute = create<RouteState>((set) => {
       const hi = index < cuts.length - 1 ? cuts[index + 1].t - 1e-3 : 1
       const nt = Math.min(hi, Math.max(lo, t))
       if (Math.abs(nt - c.t) < 1e-6) return {}
+      /* NO history push here — the UI wraps the gesture in beginProgramEdit
+         (one drag = one undo step) */
       return { program: cuts.map((x, i) => (i === index ? { ...x, t: nt } : x)) }
     }),
   removeProgramCut: (index) =>
-    set((s) => ({ program: mergeCuts(s.program.filter((_, i) => i !== index)) })),
+    set((s) => {
+      if (s.programLocked) return {}
+      const prev = s.program[index - 1]
+      return {
+        ...commit(s, mergeCuts(s.program.filter((_, i) => i !== index))),
+        /* the merge lands on the LEFT neighbour — keep it selected */
+        programSelection: prev ? index - 1 : null,
+      }
+    }),
+  beginProgramEdit: () =>
+    set((s) => {
+      if (s.programLocked) return {}
+      return { programPast: [...s.programPast.slice(-49), s.program], programFuture: [] }
+    }),
+  insertProgramCut: (shotId, t) =>
+    set((s) => {
+      if (s.programLocked) return {}
+      if (!s.shots.some((sh) => sh.id === shotId)) return {}
+      const tt = Math.min(1, Math.max(0, t))
+      const eps = 1e-4
+      const without = s.program.filter((c) => Math.abs(c.t - tt) >= eps)
+      const next = mergeCuts([...without, { t: tt, shotId }])
+      const at = next.findIndex((c) => c.shotId === shotId && Math.abs(c.t - tt) < eps)
+      return { ...commit(s, next), programSelection: at === -1 ? null : at }
+    }),
+  splitProgramAt: (t) =>
+    set((s) => {
+      if (s.programLocked) return {}
+      const tt = Math.min(1, Math.max(0, t))
+      /* the owning segment = the last cut at/before tt (a leading gap has
+         no segment — nothing to split there) */
+      let owner = -1
+      s.program.forEach((c, i) => {
+        if (c.t <= tt + 1e-6) owner = i
+      })
+      if (owner === -1) return {}
+      const eps = 1e-4
+      if (s.program[owner].t > tt - eps) return {}
+      /* deliberately NOT mergeCuts: the split point is a same-shot boundary
+         (the visible marker for the tail about to be relinked). It folds
+         away by itself once the tail gets another 机位 — or when the
+         boundary is deleted / any later mergeCuts pass runs. */
+      const next = [...s.program, { t: tt, shotId: s.program[owner].shotId }].sort(
+        (a, b) => a.t - b.t,
+      )
+      const at = next.findIndex((c) => Math.abs(c.t - tt) < eps)
+      return { ...commit(s, next), programSelection: at === -1 ? null : at }
+    }),
+  deleteProgramSeg: (index) =>
+    set((s) => {
+      if (s.programLocked) return {}
+      const cuts = s.program
+      const c = cuts[index]
+      if (!c) return {}
+      const end = index + 1 < cuts.length ? cuts[index + 1].t : 1
+      const dur = end - c.t
+      /* magnetic: the segment's cut goes AND every later cut shifts left by
+         its duration — the program shrinks, the timeline never re-plays the
+         deleted 机位 */
+      const next = mergeCuts(
+        cuts
+          .filter((_, i) => i !== index)
+          .map((x) => (x.t > c.t ? { ...x, t: x.t - dur } : x)),
+      )
+      return {
+        ...commit(s, next),
+        programSelection: next.length ? Math.min(index, next.length - 1) : null,
+      }
+    }),
+  setProgramSegShot: (index, shotId) =>
+    set((s) => {
+      if (s.programLocked) return {}
+      const c = s.program[index]
+      if (!c || c.shotId === shotId) return {}
+      if (!s.shots.some((sh) => sh.id === shotId)) return {}
+      const next = mergeCuts(s.program.map((x, i) => (i === index ? { ...x, shotId } : x)))
+      /* mergeCuts may fold this cut into a same-shot neighbour — re-locate
+         the selection by TIME (the boundary the user clicked keeps meaning
+         "this segment") */
+      const at = next.findIndex((x) => Math.abs(x.t - c.t) < 1e-6)
+      return { ...commit(s, next), programSelection: at === -1 ? null : at }
+    }),
+  reorderProgramSeg: (from, to) =>
+    set((s) => {
+      if (s.programLocked) return {}
+      const cuts = s.program
+      if (cuts.length < 2) return {}
+      if (from < 0 || from >= cuts.length || to < 0 || to >= cuts.length) return {}
+      if (from === to) return {}
+      /* magnetic reorder: the SEGMENT SLOTS (boundary times) stay exactly
+         where they are, the 机位 order swaps — each shot's DURATION travels
+         with it (FCP-style clip move) */
+      const ids = cuts.map((c) => c.shotId)
+      const [movedId] = ids.splice(from, 1)
+      ids.splice(to, 0, movedId)
+      const next = mergeCuts(cuts.map((c, i) => ({ ...c, shotId: ids[i] })))
+      const movedT = cuts[from].t
+      const at = next.findIndex((c) => Math.abs(c.t - movedT) < 1e-6)
+      return { ...commit(s, next), programSelection: at === -1 ? null : at }
+    }),
+  selectProgramSeg: (index) => set({ programSelection: index }),
+  setProgramLocked: (on) =>
+    set((s) => ({ programLocked: on ?? !s.programLocked, programSelection: null })),
+  undoProgram: () =>
+    set((s) => {
+      if (s.programLocked) return {}
+      const prev = s.programPast[s.programPast.length - 1]
+      if (!prev) return {}
+      return {
+        program: prev,
+        programPast: s.programPast.slice(0, -1),
+        programFuture: [...s.programFuture, s.program],
+        programSelection: null,
+      }
+    }),
+  redoProgram: () =>
+    set((s) => {
+      if (s.programLocked) return {}
+      const next = s.programFuture[s.programFuture.length - 1]
+      if (!next) return {}
+      return {
+        program: next,
+        programPast: [...s.programPast, s.program],
+        programFuture: s.programFuture.slice(0, -1),
+        programSelection: null,
+      }
+    }),
   }
 })
 

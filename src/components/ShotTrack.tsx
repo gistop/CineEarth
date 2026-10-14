@@ -55,10 +55,18 @@ export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpa
       className={`ce-shot${active ? ' is-active' : ''}`}
       role="button"
       tabIndex={0}
-      title={`时长 ${dur.toFixed(1)}s · 双击名字重命名 · 点击切换编辑该机位（三角 = 展开或收起详细轨道）`}
+      title={`时长 ${dur.toFixed(1)}s · 双击名字重命名 · 点击切换编辑该机位（三角 = 展开或收起详细轨道）· 拖到主输出轨道 = 在落点添加该机位的镜头段`}
       onClick={onActivate}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onActivate()
+      }}
+      /* drag the 机位 header ONTO the 主输出 lane = create a segment at the
+         (snapped) drop point. HTML5 DnD coexists with the click activation —
+         a drag never fires click. Disabled while renaming (text selection). */
+      draggable={!editing}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/x-ce-shot', shot.id)
+        e.dataTransfer.effectAllowed = 'copy'
       }}
     >
       <div className="ce-shot-side">

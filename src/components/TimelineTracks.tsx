@@ -6,6 +6,7 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useUI } from '../store/ui'
 import { TagIcon } from './Icons'
@@ -483,6 +484,40 @@ function zoomAtView(
   set({ start, span })
 }
 
+/** 轨道锁 — the padlock next to the chain. ON: EVERY program write is
+ *  refused (boundary drags, keyboard commands, drag-drop creation AND the
+ *  cut-link activation cut — the chain greys out). Browsing/activating stay
+ *  free: a locked lane is read-only, not hidden. */
+function ProgramLockBtn() {
+  const locked = useRoute((s) => s.programLocked)
+  const set = useRoute((s) => s.setProgramLocked)
+  return (
+    <button
+      type="button"
+      className={`ce-proglock${locked ? ' is-on' : ''}`}
+      aria-pressed={locked}
+      title={
+        locked
+          ? '主输出已锁定 — 切镜与全部编辑被拒绝（可继续浏览/激活机位）'
+          : '锁定主输出 — 防止误编辑（激活切镜、拖动、键盘命令全部只读）'
+      }
+      onClick={() => set()}
+    >
+      {locked ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round">
+          <rect x="6" y="11" width="12" height="9" rx="2" />
+          <path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round">
+          <rect x="6" y="11" width="12" height="9" rx="2" />
+          <path d="M8.5 11V8a3.5 3.5 0 0 1 6.9-.9" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 /** 切镜联动 toggle — the chain icon on the 主输出 header. ON (default,
  *  🔗): activating a shot also cuts the program at the playhead (导播式：
  *  切换即剪辑). OFF (broken chain): activation is pure edit-target
@@ -491,12 +526,16 @@ function zoomAtView(
 function CutLinkBtn() {
   const on = useUI((s) => s.cutLink)
   const toggle = useUI((s) => s.toggleCutLink)
+  /* the 轨道锁 outranks the link — a locked lane refuses the cut, and the
+     chain reads DISABLED (greyed) so nobody thinks an activation cut */
+  const locked = useRoute((s) => s.programLocked)
   return (
     <button
       type="button"
-      className={`ce-cutlink${on ? ' is-on' : ''}`}
+      className={`ce-cutlink${on ? ' is-on' : ''}${locked ? ' is-locked' : ''}`}
       aria-pressed={on}
-      title={on ? '可切镜' : '不切镜'}
+      disabled={locked}
+      title={locked ? '主输出已锁定 — 激活不再切镜' : on ? '可切镜' : '不切镜'}
       onClick={() => toggle()}
     >
       {/* two IDENTICAL chain links, same size in both states — linked
@@ -977,7 +1016,25 @@ export default function TimelineTracks() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (selected.size === 0) return
+      /* a fresh KEYFRAME selection wins (it is what the user just clicked);
+         otherwise a selected 主输出 segment takes Delete = magnetic remove */
+      if (selected.size === 0) {
+        const rs = useRoute.getState()
+        if (rs.programSelection != null) {
+          const el = document.activeElement
+          if (
+            el instanceof HTMLElement &&
+            (el.tagName === 'INPUT' ||
+              el.tagName === 'TEXTAREA' ||
+              el.tagName === 'SELECT' ||
+              el.isContentEditable)
+          )
+            return
+          e.preventDefault()
+          rs.deleteProgramSeg(rs.programSelection)
+        }
+        return
+      }
       const el = document.activeElement
       if (
         el instanceof HTMLElement &&
@@ -1005,6 +1062,74 @@ export default function TimelineTracks() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selected, route.waypoints, removeWaypoint, removeRevealKey])
+
+  /* ----- 主输出 lane keyboard commands (professional multicam) ------------
+     B = blade at the playhead · P = cut onto the ACTIVE 机位 at the playhead
+     · 1-9 = relink the selected segment · Ctrl/Cmd+Z & +Shift+Z & +Y =
+     program undo/redo · Esc = close the relink menu / drop the selection.
+     (declared BEFORE the effect that closes over it) */
+  const [segMenu, setSegMenu] = useState<{ i: number; x: number; y: number } | null>(
+    null,
+  )
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement
+      if (
+        el instanceof HTMLElement &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+      )
+        return
+      const s = useRoute.getState()
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) s.redoProgram()
+        else s.undoProgram()
+        setSegMenu(null)
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        s.redoProgram()
+        return
+      }
+      if (e.key === 'Escape') {
+        if (segMenu) {
+          setSegMenu(null)
+          e.stopImmediatePropagation()
+          return
+        }
+        if (s.programSelection != null) {
+          s.selectProgramSeg(null)
+          /* this listener registers BEFORE App's Esc chain (child effects
+             run first), so swallowing keeps the chrome from closing too */
+          e.stopImmediatePropagation()
+          return
+        }
+      }
+      /* the edit keys need the program lane on screen */
+      if (!useUI.getState().timelineExpanded) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (k === 'b') {
+        e.preventDefault()
+        s.splitProgramAt(s.progress)
+      } else if (k === 'p') {
+        e.preventDefault()
+        if (s.activeShotId) s.insertProgramCut(s.activeShotId, s.progress)
+      } else if (/^[1-9]$/.test(e.key) && s.programSelection != null) {
+        const shot = s.shots[Number(e.key) - 1]
+        if (shot) {
+          e.preventDefault()
+          s.setProgramSegShot(s.programSelection, shot.id)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [segMenu])
 
   /** move all selected keys in time; wp keys commit as segment durations */
   const applyDrag = (d: DragState, cx: number, cy: number) => {
@@ -1292,23 +1417,55 @@ export default function TimelineTracks() {
      drag a boundary = re-time the switch; click one (no drag) = delete it
      (the segments merge). */
   const program = useRoute((s) => s.program)
+  const programSelection = useRoute((s) => s.programSelection)
+  const programLocked = useRoute((s) => s.programLocked)
   const moveProgramCut = useRoute((s) => s.moveProgramCut)
   const removeProgramCut = useRoute((s) => s.removeProgramCut)
+  const insertProgramCut = useRoute((s) => s.insertProgramCut)
+  const setProgramSegShot = useRoute((s) => s.setProgramSegShot)
+  const reorderProgramSeg = useRoute((s) => s.reorderProgramSeg)
+  const selectProgramSeg = useRoute((s) => s.selectProgramSeg)
+  const beginProgramEdit = useRoute((s) => s.beginProgramEdit)
   const shotName = (id: string) => shots.find((sh) => sh.id === id)?.name ?? '？'
   const progLaneRef = useRef<HTMLDivElement>(null)
-  const progDragRef = useRef<{ i: number; startX: number; moved: boolean } | null>(null)
+  /* the live gesture on the program lane — a boundary re-time (cut) or a
+     magnetic segment move (seg) */
+  const progDragRef = useRef<
+    | { kind: 'cut'; i: number; startX: number; moved: boolean; begun: boolean }
+    | {
+        kind: 'seg'
+        i: number
+        startX: number
+        startY: number
+        moved: boolean
+        to: number | null
+      }
+    | null
+  >(null)
+  /* magnetic-move preview: which segment drags, which slot it would land in */
+  const [segDrag, setSegDrag] = useState<{ from: number; to: number } | null>(null)
+  /* drag-drop creation (机位 header → lane): the snapped target second */
+  const [dropSec, setDropSec] = useState<number | null>(null)
 
   /** contiguous segments: [0..first cut) is an un-编排 gap, each cut holds
-   *  until the next; the last holds to the end */
-  const progSegs: { t0: number; t1: number; shotId: string | null }[] = (() => {
-    if (program.length === 0) return [{ t0: 0, t1: 1, shotId: null }]
-    const segs: { t0: number; t1: number; shotId: string | null }[] =
-      program[0].t > 1e-4 ? [{ t0: 0, t1: program[0].t, shotId: null }] : []
+   *  until the next; the last holds to the end. `cut` = the program index of
+   *  the boundary that STARTS the segment (null for the gap) — the address
+   *  every selection/keyboard command uses. */
+  const progSegs: {
+    t0: number
+    t1: number
+    shotId: string | null
+    cut: number | null
+  }[] = (() => {
+    if (program.length === 0) return [{ t0: 0, t1: 1, shotId: null, cut: null }]
+    const segs: { t0: number; t1: number; shotId: string | null; cut: number | null }[] =
+      program[0].t > 1e-4 ? [{ t0: 0, t1: program[0].t, shotId: null, cut: null }] : []
     program.forEach((c, i) =>
       segs.push({
         t0: c.t,
         t1: i + 1 < program.length ? program[i + 1].t : 1,
         shotId: c.shotId,
+        cut: i,
       }),
     )
     return segs
@@ -1322,31 +1479,143 @@ export default function TimelineTracks() {
     return i === -1 ? progSegs.length - 1 : i
   })()
 
-  const onProgDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const handle = (e.target as HTMLElement).closest<HTMLElement>('.ce-program-cut')
-    if (!handle) return
-    /* keep the container's marquee/key gestures out of this one */
-    e.stopPropagation()
-    e.currentTarget.setPointerCapture(e.pointerId)
-    progDragRef.current = { i: Number(handle.dataset.cut), startX: e.clientX, moved: false }
+  /** lane px → view seconds (null when the lane isn't laid out) */
+  const laneSecOf = (clientX: number) => {
+    const lane = progLaneRef.current
+    if (!lane) return null
+    const r = lane.getBoundingClientRect()
+    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
+    return viewStart + ratio * viewSpan
   }
+
+  /** professional trim snapping: whole seconds / the playhead / the other
+   *  boundaries, within a ~6px tolerance — hold Alt to place freely */
+  const snapSec = (rawSec: number, alt: boolean, excludeCut?: number) => {
+    const laneW = progLaneRef.current?.getBoundingClientRect().width || 1
+    const tolSec = (6 / laneW) * viewSpan
+    const clamped = Math.min(DURATION, Math.max(0, rawSec))
+    if (alt || tolSec <= 0) return clamped
+    const cands = [
+      Math.round(clamped),
+      progress * DURATION,
+      ...program.filter((_, i) => i !== excludeCut).map((c) => c.t * DURATION),
+    ]
+    let best = clamped
+    let bestD = tolSec
+    for (const c of cands) {
+      const d = Math.abs(c - clamped)
+      if (d < bestD) {
+        bestD = d
+        best = c
+      }
+    }
+    return Math.min(DURATION, Math.max(0, best))
+  }
+
+  const onProgDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    /* keep the container's marquee/key gestures out of this lane */
+    e.stopPropagation()
+    const target = e.target as HTMLElement
+    const handle = target.closest<HTMLElement>('.ce-program-cut')
+    if (handle) {
+      e.currentTarget.setPointerCapture(e.pointerId)
+      progDragRef.current = {
+        kind: 'cut',
+        i: Number(handle.dataset.cut),
+        startX: e.clientX,
+        moved: false,
+        begun: false,
+      }
+      return
+    }
+    const seg = target.closest<HTMLElement>('.ce-program-seg')
+    const cut = seg?.dataset.cut
+    if (seg && cut != null && !programLocked) {
+      e.currentTarget.setPointerCapture(e.pointerId)
+      progDragRef.current = {
+        kind: 'seg',
+        i: Number(cut),
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        to: null,
+      }
+      return
+    }
+    /* empty lane / gap segment / locked lane: drop the selection */
+    selectProgramSeg(null)
+  }
+
   const onProgMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = progDragRef.current
     if (!d) return
-    /* a plain click never re-times anything (3px dead zone) */
-    if (!d.moved && Math.abs(e.clientX - d.startX) < 3) return
+    if (d.kind === 'cut') {
+      /* a plain click never re-times anything (3px dead zone) */
+      if (!d.moved && Math.abs(e.clientX - d.startX) < 3) return
+      if (!d.begun) {
+        d.begun = true
+        beginProgramEdit() /* one gesture = one undo step */
+      }
+      d.moved = true
+      const sec = laneSecOf(e.clientX)
+      if (sec == null) return
+      /* lane px → view seconds → snapped → playhead fraction (cuts' domain) */
+      moveProgramCut(d.i, snapSec(sec, e.altKey, d.i) / DURATION)
+      return
+    }
+    /* seg: past a 4px slop it becomes a magnetic MOVE (a plain click selects) */
+    if (!d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 4) return
     d.moved = true
-    const lane = progLaneRef.current
-    if (!lane) return
-    const r = lane.getBoundingClientRect()
-    const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
-    /* lane px → view seconds → playhead fraction (the cuts' domain) */
-    moveProgramCut(d.i, (viewStart + ratio * viewSpan) / DURATION)
+    const sec = laneSecOf(e.clientX)
+    if (sec == null) return
+    /* insertion slot = before the first boundary past the pointer */
+    let to = program.length
+    for (let i = 0; i < program.length; i++) {
+      if (program[i].t * DURATION > sec) {
+        to = i
+        break
+      }
+    }
+    d.to = to
+    setSegDrag({ from: d.i, to })
   }
+
   const onProgUp = () => {
     const d = progDragRef.current
     progDragRef.current = null
-    if (d && !d.moved) removeProgramCut(d.i)
+    if (!d) return
+    if (d.kind === 'cut') {
+      /* click (no drag) = select the segment STARTING at this boundary */
+      if (!d.moved) selectProgramSeg(d.i)
+      return
+    }
+    setSegDrag(null)
+    if (!d.moved) {
+      selectProgramSeg(d.i) /* plain click = select */
+      return
+    }
+    if (d.to == null) return
+    /* splice slot: the dragged segment leaves `from` first */
+    const to = d.to > d.i ? d.to - 1 : d.to
+    if (to !== d.i) reorderProgramSeg(d.i, to)
+  }
+
+  /** dblclick: a boundary DELETES (the segments merge back); a segment opens
+   *  the 换机位 menu at the pointer */
+  const onProgDblClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    const handle = target.closest<HTMLElement>('.ce-program-cut')
+    if (handle) {
+      e.stopPropagation()
+      removeProgramCut(Number(handle.dataset.cut))
+      return
+    }
+    const seg = target.closest<HTMLElement>('.ce-program-seg')
+    const cut = seg?.dataset.cut
+    if (seg && cut != null) {
+      e.stopPropagation()
+      setSegMenu({ i: Number(cut), x: e.clientX, y: e.clientY })
+    }
   }
 
   /** one expanded shot's channel rows. The ACTIVE shot's rows are live —
@@ -1474,16 +1743,25 @@ export default function TimelineTracks() {
           anywhere drops its boundary at the playhead (导播式：切换即剪辑);
           this lane adds the refine gestures: drag a boundary = re-time the
           switch, click one = delete it (segments merge). */}
-      <div className="ce-track ce-program">
+      <div className={`ce-track ce-program${programLocked ? ' is-locked' : ''}`}>
         <div className="ce-track-side">
           <div
             className="ce-track-label"
-            title="主输出编排 — 单击任意机位即在播放头落下剪辑点；拖动边界精修切换时间，单击边界删除（两段合并）"
+            title="主输出编排 — 单击段选中（Delete 磁性删除 · 数字键换机位 · 拖动换位）· 双击段换机位 · 拖动边界改切换时间（吸附）· 双击边界删除（合并）· 拖机位到本轨添加镜头 · B 分割 · P 在播放头插入激活机位"
           >
             <span className="ce-track-name">主输出</span>
             <CutLinkBtn />
+            <ProgramLockBtn />
             <span className="ce-track-value">
-              {program.length ? `${program.length} 次切换` : '未编排'}
+              {programSelection != null && program[programSelection]
+                ? `${shotName(program[programSelection].shotId)} · ${(
+                    program[programSelection].t * DURATION
+                  ).toFixed(1)}–${(
+                    (program[programSelection + 1]?.t ?? 1) * DURATION
+                  ).toFixed(1)}s`
+                : program.length
+                  ? `${program.length} 次切换`
+                  : '未编排'}
             </span>
           </div>
         </div>
@@ -1494,17 +1772,44 @@ export default function TimelineTracks() {
           onPointerMove={onProgMove}
           onPointerUp={onProgUp}
           onPointerCancel={onProgUp}
+          onDoubleClick={onProgDblClick}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('application/x-ce-shot')) return
+            e.preventDefault()
+            const sec = laneSecOf(e.clientX)
+            if (sec != null) setDropSec(snapSec(sec, e.altKey))
+          }}
+          onDragLeave={() => setDropSec(null)}
+          onDrop={(e) => {
+            if (!e.dataTransfer.types.includes('application/x-ce-shot')) return
+            e.preventDefault()
+            const id = e.dataTransfer.getData('application/x-ce-shot')
+            const sec = laneSecOf(e.clientX)
+            setDropSec(null)
+            if (!id || sec == null) return
+            insertProgramCut(id, snapSec(sec, e.altKey) / DURATION)
+          }}
         >
           {progSegs.map((seg, i) => (
             <div
               key={`${seg.t0}-${seg.shotId ?? 'gap'}`}
               className={`ce-program-seg${seg.shotId ? '' : ' is-gap'}${
                 i === progLive ? ' is-live' : ''
+              }${seg.cut === programSelection ? ' is-selected' : ''}${
+                segDrag && seg.cut === segDrag.from ? ' is-dragging' : ''
               }`}
+              data-cut={seg.cut ?? undefined}
               style={{
                 left: `${pct(seg.t0 * DURATION)}%`,
                 width: `${Math.max(0, pct(seg.t1 * DURATION) - pct(seg.t0 * DURATION))}%`,
               }}
+              title={
+                seg.shotId
+                  ? `${shotName(seg.shotId)} · ${(seg.t0 * DURATION).toFixed(1)}–${(
+                      seg.t1 * DURATION
+                    ).toFixed(1)}s — 单击选中 · 双击换机位 · 拖动换位 · Delete 删除`
+                  : undefined
+              }
             >
               {seg.shotId ? shotName(seg.shotId) : '未编排'}
             </div>
@@ -1515,10 +1820,56 @@ export default function TimelineTracks() {
               className="ce-program-cut"
               data-cut={i}
               style={{ left: `${pct(c.t * DURATION)}%` }}
-              title={`${shotName(c.shotId)} @ ${(c.t * DURATION).toFixed(1)}s — 拖动改切换时间 · 单击删除`}
+              title={`${shotName(c.shotId)} @ ${(c.t * DURATION).toFixed(1)}s — 拖动改切换时间（吸附，Alt 自由）· 单击选中后段 · 双击删除（合并）`}
             />
           ))}
+          {/* magnetic-move insertion slot indicator */}
+          {segDrag && (
+            <span
+              className="ce-program-slot"
+              style={{
+                left: `${pct(
+                  (program[segDrag.to]?.t ?? program[program.length - 1]?.t ?? 0) * DURATION,
+                )}%`,
+              }}
+            />
+          )}
+          {/* drag-drop creation target indicator */}
+          {dropSec != null && (
+            <span className="ce-program-drop" style={{ left: `${pct(dropSec)}%` }} />
+          )}
         </div>
+        {/* dblclick relink menu — fixed at the pointer; backdrop closes it */}
+        {segMenu && program[segMenu.i] && (
+          <>
+            <div className="ce-menu-backdrop" onClick={() => setSegMenu(null)} />
+            <div
+              className="ce-program-menu"
+              style={{
+                left: `${Math.max(8, Math.min(segMenu.x, window.innerWidth - 180))}px`,
+                top: `${Math.max(8, Math.min(segMenu.y, window.innerHeight - 60 - shots.length * 32))}px`,
+              }}
+            >
+              <div className="ce-program-menu-hint">切换为…（或按数字键）</div>
+              {shots.map((sh, n) => (
+                <button
+                  key={sh.id}
+                  type="button"
+                  className={`ce-program-menu-item${
+                    program[segMenu.i].shotId === sh.id ? ' is-cur' : ''
+                  }`}
+                  onClick={() => {
+                    setProgramSegShot(segMenu.i, sh.id)
+                    setSegMenu(null)
+                  }}
+                >
+                  <span className="ce-program-menu-idx">{n + 1}</span>
+                  {sh.name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* 机位 accordion — one header per shot; the ACTIVE shot's channel rows

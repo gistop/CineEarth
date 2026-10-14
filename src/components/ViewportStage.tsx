@@ -26,7 +26,7 @@ import {
   ScreenSpaceEventType,
   Viewer,
 } from 'cesium'
-import { getViewer, setProgramRefresh, setProgramViewer } from '../cesium/viewerRegistry'
+import { setProgramRefresh, setProgramViewer } from '../cesium/viewerRegistry'
 import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
 import { useUI } from '../store/ui'
 import { useExport } from '../features/export/exportStore'
@@ -34,8 +34,8 @@ import { applyFraming, frameOf, pinOutputExtent, stageFramingOf, type OutputExte
 import { programShotAt, useRoute } from '../features/route/routeStore'
 import { hasPosition } from '../features/route/types'
 import { buildShotRouteEntities } from '../features/route/routeEntities'
-import { applyViewportQuality } from '../cesium/viewportQuality'
 import { bindTerrain } from '../cesium/terrainSource'
+import { applyViewportQuality } from '../cesium/viewportQuality'
 import GlobeViewport from './GlobeViewport'
 
 /* ------------------------------------------------------------------ */
@@ -48,30 +48,6 @@ type PaneVariant = 'pane' | 'thumb' | 'program'
  *  per-frame setView+requestRender work is what makes 8+ live views viable */
 const FOLLOW_MS: Record<PaneVariant, number> = { pane: 50, thumb: 100, program: 50 }
 
-/** quality dial per variant. Set at runtime, NOT at construction: a shot
- *  moving between the main grid and the rail only re-dials its existing
- *  Viewer — rebuilding it would flash and re-fetch tiles on every double
- *  click (主/次 归属切换). */
-const QUALITY: Record<PaneVariant, { scale: number; sse: number; cache: number; msaa: number }> = {
-  /* 监视窗 = FULL quality, identical to the editor's main globe. The editor
-     overlay and a monitor pane are two displayers of the SAME shot, and any
-     dial difference between them showed up as the picture "changing" the
-     moment a shot won or lost activation. The cost is real — MSAA 4x is
-     roughly 4× the fill bandwidth and memory per live view, SSE 2 pulls
-     finer tiles — so many shots at once is where this hurts (the old
-     0.85/SSE3/no-MSAA dial existed to make 8+ live views viable). */
-  pane: { scale: 1, sse: 2, cache: 100, msaa: 4 },
-  /* the rail thumbs stay deliberately cheap: tiny canvases, glance-only */
-  thumb: { scale: 0.55, sse: 5, cache: 40, msaa: 1 },
-  /* Program Out is the finished-picture jury — FULL quality, matching the
-     editor's main globe (scale 1 / SSE 2 / MSAA 4x). No shortcuts here: a
-     soft Program Out misleads the framing verdict. */
-  program: { scale: 1, sse: 2, cache: 100, msaa: 4 },
-}
-
-function applyQuality(v: Viewer, variant: PaneVariant): void {
-  applyViewportQuality(v, variant)
-}
 
 /** 'program' — a source key that can never collide with a shot id */
 const PROGRAM_SOURCE = '\u0000program'
