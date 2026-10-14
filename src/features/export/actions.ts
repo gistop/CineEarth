@@ -17,13 +17,49 @@ function applyPose(pose: Pose): void {
   applyFraming(viewer, pose)
 }
 
-/** Screenshot: explicit render, then capture the canvas (UI overlays are DOM — never baked in). */
+/** Screenshot: the OUTPUT FRAME, not the editor canvas. The 尺寸 setting
+ *  (ui.outW/outH) is the same source the GES mask and the video encode use:
+ *  the picture is the canvas' centred aspect-fit rectangle at that ratio —
+ *  in push layout exactly the UN-MASKED frame area — rendered at that pixel
+ *  count for real (withRenderScale: no fake upscaled 1080p). DOM overlays
+ *  are never baked in. */
 export function takeScreenshot(): void {
   const viewer = getViewer()
   if (!viewer) return
+  const { outW, outH } = useUI.getState()
+
+  /* carry the output's pixel count before we grab (Cesium clamps to 4) */
+  const restoreScale = withRenderScale(viewer, outW, outH)
   viewer.scene.render()
-  viewer.canvas.toBlob((blob) => {
-    if (blob) downloadBlob(blob, `cineearth-${createStamp()}.png`)
+
+  /* centred aspect-fit rect of the OUTPUT ratio — in push layout this is
+     exactly the GES editor's un-masked area (same geometry as .ce-frame) */
+  const cw = viewer.canvas.width
+  const ch = viewer.canvas.height
+  const target = outW / outH
+  let sx = 0
+  let sy = 0
+  let sw = cw
+  let sh = ch
+  if (cw / ch > target) {
+    sw = Math.round(ch * target)
+    sx = Math.floor((cw - sw) / 2)
+  } else {
+    sh = Math.round(cw / target)
+    sy = Math.floor((ch - sh) / 2)
+  }
+
+  /* the offline canvas is decoupled from the viewer the moment drawImage
+     returns — safe to restore the scale right here, no torn frame possible */
+  const out = document.createElement('canvas')
+  out.width = outW
+  out.height = outH
+  const ctx = out.getContext('2d')
+  if (ctx) ctx.drawImage(viewer.canvas, sx, sy, sw, sh, 0, 0, outW, outH)
+  restoreScale()
+
+  out.toBlob((blob) => {
+    if (blob) downloadBlob(blob, `cineearth-${createStamp()}-${outW}x${outH}.png`)
   }, 'image/png')
 }
 

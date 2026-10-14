@@ -63,6 +63,13 @@
   --ce-tl-collapsed: 48px;
   --ce-tl-expanded: 232px;
 
+  /* corner furniture (fullscreen preview): the ONE edge inset every corner
+     float shares, and the row height they centre themselves in — the credit
+     strip (bottom-left) and the exit badge (bottom-right) then read as one
+     balanced pair instead of two loose tags */
+  --ce-edge-pad: 16px;
+  --ce-corner-h: 34px;
+
   /* output picture aspect FALLBACK (W/H). The live value is fed from the
      project 尺寸 setting (ui.outW/outH → .ce-stage inline vars); this only
      covers the first paint before React lands the inline vars. In push layout

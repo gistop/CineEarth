@@ -1,7 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Viewer,
-  ImageryLayer,
   Cartographic,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -12,11 +11,41 @@ import { useRoute } from '../features/route/routeStore'
 import { useExport } from '../features/export/exportStore'
 import { applyFraming, currentCameraAsFreeCam, isProgrammaticFraming, pinOutputExtent, sameFraming } from '../features/route/framing'
 import { setViewer } from '../cesium/viewerRegistry'
-import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
+import { bindImagery, onImageryArriving } from '../cesium/imagerySource'
 import { bootstrapIonSettings } from '../features/settings/ionTerrain'
 import { syncSceneSettings } from '../features/settings/sceneSettings'
 import { applyViewportQuality } from '../cesium/viewportQuality'
 import { bindTerrain } from '../cesium/terrainSource'
+
+/**
+ * 开场轨道环 (the opening ritual) — over the ink sphere: a thin orbit ring
+ * with one small satellite circling it, breathing slowly. Retires in step
+ * with the imagery crossfade: onImageryArriving fires when the tile queue
+ * first DRAINS (sharp on arrival — the audience never sees the stream
+ * refine), then the veil fades out and drops from the DOM.
+ * Pure CSS/SVG-free, pointer-transparent, main globe only (panes keep the
+ * bare ink sphere — a ring in every small pane would read as noise).
+ */
+function OrbitVeil() {
+  const [leaving, setLeaving] = useState(false)
+  const [gone, setGone] = useState(false)
+  useEffect(
+    () =>
+      onImageryArriving(() => {
+        setLeaving(true)
+        window.setTimeout(() => setGone(true), 1300)
+      }),
+    [],
+  )
+  if (gone) return null
+  return (
+    <div className={`ce-orbit-veil${leaving ? ' is-leaving' : ''}`} aria-hidden="true">
+      <div className="ce-orbit-ring">
+        <span className="ce-orbit-dot" />
+      </div>
+    </div>
+  )
+}
 
 /**
  * The globe is an imperative island:
@@ -35,10 +64,13 @@ export default function GlobeViewport() {
     let viewer: Viewer | undefined
     try {
       viewer = new Viewer(host, {
-        /* the SHARED source (OSM placeholder until ion AERIAL resolves) —
-           every viewport reads the same instance, so a pane created before
-           ion lands still ends up on the same imagery as this globe */
-        baseLayer: new ImageryLayer(getImageryProvider()),
+        /* ALWAYS born bare (the ink sphere) — bindImagery applies whatever
+           the shared source holds, resolved or not, as a crossfade. A base
+           layer here would race React StrictMode's double mount: the first
+           mount's ion bootstrap can resolve between the mounts, and the
+           second viewer would start with satellite baked in (no ink sphere,
+           no fade — exactly the bug this line kills). */
+        baseLayer: false,
         baseLayerPicker: false,
         geocoder: false,
         homeButton: false,
@@ -182,6 +214,9 @@ export default function GlobeViewport() {
   return (
     <>
       <div ref={hostRef} className="ce-globe" />
+      {/* the opening ritual: orbit ring over the ink sphere, retired by the
+          first imagery crossfade (see OrbitVeil / imagerySource) */}
+      <OrbitVeil />
       {/* ion imagery/terrain attribution — native-style strip, left-aligned above the timeline */}
       <div ref={creditRef} className="ce-credits" />
     </>

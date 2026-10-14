@@ -145,10 +145,23 @@ export const TargetIcon = ({ size = 16, className }: P) => (
   </svg>
 )
 
+/** video camera — the RENDER action RECORDS the program picture (MP4 is
+ *  merely the container it lands in), not a "download" */
 export const RenderIcon = ({ size = 16, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
-    <path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5" />
-    <path d="M5 17.5v1A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-1" />
+    <rect x="2.5" y="6.5" width="12.5" height="11" rx="2" />
+    <path d="M15 10.3l5.5-3v9.4l-5.5-3" />
+  </svg>
+)
+
+/** four-square browser grid — the LIBRARY drawer (layers / shots / props /
+ *  files): resource-browsing semantics, distinct from every tab icon */
+export const GridIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
   </svg>
 )
 

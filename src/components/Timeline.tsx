@@ -5,12 +5,14 @@ import { timelineDuration } from '../features/route/pathMath'
 import { useExport } from '../features/export/exportStore'
 import { renderRouteVideo, takeScreenshot } from '../features/export/actions'
 import TimelineTracks, { TimelineRuler, clampView } from './TimelineTracks'
-import { useReveal } from '../features/route/revealStore'
+// HIDDEN (parked, not removed): growth-line & lock-camera toolbar entries —
+// restore together with their state reads, imports and the G/C hotkeys in App.
+// import { useReveal } from '../features/route/revealStore'
 import {
-  SlidersIcon,
-  GrowthIcon,
+  GridIcon,
+  // GrowthIcon,
   SunIcon,
-  LockIcon,
+  // LockIcon,
   PlayIcon,
   PauseIcon,
   TargetIcon,
@@ -41,14 +43,15 @@ export default function Timeline() {
   const setTarget = useRoute((s) => s.setTarget)
   const playing = useUI((s) => s.playing)
   const setPlaying = useUI((s) => s.setPlaying)
-  const cameraLocked = useUI((s) => s.cameraLocked)
-  const setCameraLocked = useUI((s) => s.setCameraLocked)
+  // const cameraLocked = useUI((s) => s.cameraLocked)
+  // const setCameraLocked = useUI((s) => s.setCameraLocked)
   const sunOpen = useUI((s) => s.sunOpen)
   const toggleSunPanel = useUI((s) => s.toggleSunPanel)
 
-  /* growth-line keyframe track (AE-style reveal %) */
+  /* growth-line keyframe track (AE-style reveal %) — buttons parked
   const growthLine = useReveal((s) => s.growthLine)
   const setGrowthLine = useReveal((s) => s.setGrowthLine)
+  */
 
   const route = useRoute((s) => s.route)
   const setProgress = useRoute((s) => s.setProgress)
@@ -127,6 +130,9 @@ export default function Timeline() {
       )}
       <div className="ce-tl-bar">
         <div className="ce-transport">
+          {/* PARKED: growth-line & lock-camera — multi-shot review pending
+              (per-shot semantics unclear for a session-wide lock). Re-enable
+              with the imports, state reads and the G/C hotkeys in App.tsx.
           <button
             type="button"
             className={`ce-icon-btn${growthLine ? ' is-on' : ''}`}
@@ -145,6 +151,7 @@ export default function Timeline() {
           >
             <LockIcon />
           </button>
+          */}
           <button
             type="button"
             className={`ce-icon-btn${sunOpen ? ' is-on' : ''}`}
@@ -161,7 +168,7 @@ export default function Timeline() {
             aria-pressed={drawerOpen}
             onClick={() => toggleDrawer()}
           >
-            <SlidersIcon />
+            <GridIcon />
           </button>
           <button type="button" className="ce-icon-btn" title="Go to start"
             onClick={() => { setProgress(0); setPlaying(false) }}>
@@ -239,7 +246,6 @@ export default function Timeline() {
               <RenderIcon />
             )}
           </button>
-          <span className="ce-tl-sep" />
           <button type="button" className="ce-icon-btn" title={expanded ? 'Collapse timeline' : 'Expand timeline'}
             onClick={() => toggleTimeline()}>
             {expanded ? <ChevronDownIcon /> : <ChevronUpIcon />}

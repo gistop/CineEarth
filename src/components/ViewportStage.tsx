@@ -22,12 +22,11 @@
 import { useEffect, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   Entity,
-  ImageryLayer,
   ScreenSpaceEventType,
   Viewer,
 } from 'cesium'
 import { setProgramRefresh, setProgramViewer } from '../cesium/viewerRegistry'
-import { bindImagery, getImageryProvider } from '../cesium/imagerySource'
+import { bindImagery } from '../cesium/imagerySource'
 import { useUI } from '../store/ui'
 import { useExport } from '../features/export/exportStore'
 import { applyFraming, frameOf, pinOutputExtent, stageFramingOf, type OutputExtentPin } from '../features/route/framing'
@@ -115,11 +114,11 @@ function ShotPane({
       /* detached credit sink: attributions must exist but never paint */
       const creditHost = document.createElement('div')
       viewer = new Viewer(host, {
-        /* the SHARED source — same provider INSTANCE as the main globe (one
-           tile pipeline, one HTTP cache). Never captured from "layer 0 of the
-           main viewer": that snapshot raced ion's async AERIAL swap and left
-           early panes stuck on the OSM placeholder. */
-        baseLayer: new ImageryLayer(getImageryProvider()),
+        /* ALWAYS born bare (the ink sphere) — bindImagery applies whatever
+           the shared source holds, resolved or not, as a crossfade. A base
+           layer here would race the source's resolution timing (StrictMode
+           double mount made it real) and skip the ink-sphere opening. */
+        baseLayer: false,
         baseLayerPicker: false,
         geocoder: false,
         homeButton: false,

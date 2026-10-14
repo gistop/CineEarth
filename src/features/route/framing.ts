@@ -13,13 +13,15 @@ import { samplePose, timelineProgressToRoute } from './pathMath'
 import { DEFAULT_FOV, type FreeCam, type Pose } from './types'
 import type { Shot } from './routeStore'
 
-/** the project's opening framing — mirrors GlobeViewport's original view */
+/** the project's opening framing — visitor-picked view over the Zermatt
+ *  valley floor looking south toward the Matterhorn (captured live via the
+ *  console fiber-scan; roll hand-trimmed to 0 from a 0.023° wobble) */
 export const HOME: FreeCam = {
-  lon: 7.6586,
-  lat: 45.9763,
-  height: 60_000,
-  heading: 0,
-  pitch: -90,
+  lon: 7.7181,
+  lat: 46.0535,
+  height: 5020,
+  heading: 195.0471,
+  pitch: -13.7003,
   roll: 0,
 }
 

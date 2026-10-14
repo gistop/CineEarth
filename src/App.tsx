@@ -6,7 +6,9 @@ import PreviewBadge from './components/PreviewBadge'
 import RouteDrawer from './features/route/RouteDrawer'
 import RouteSceneBridge from './features/route/RouteSceneBridge'
 import SunPanel from './features/settings/SunPanel'
-import { useReveal } from './features/route/revealStore'
+// PARKED with the growth/lock toolbar buttons (Timeline.tsx) — a hidden
+// feature must not keep a keyboard backdoor. Restore together.
+// import { useReveal } from './features/route/revealStore'
 import { useUI } from './store/ui'
 import { applyTheme } from './features/settings/theme'
 import './styles/ui.css'
@@ -35,7 +37,8 @@ export default function App() {
     return () => document.removeEventListener('dragstart', onDragStart)
   }, [])
 
-  /* Esc: exit preview → close panels · T: tools · R: route · G: growth · C: camera lock · S: sun · Space: play/pause */
+  /* Esc: exit preview → close panels · T: tools · R: route · S: sun · Space: play/pause
+     (G growth / C camera-lock PARKED with their toolbar buttons in Timeline.tsx) */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
@@ -52,11 +55,6 @@ export default function App() {
         s.toggleDrawer()
       } else if (e.key.toLowerCase() === 'r' && !s.previewMode) {
         s.toggleRightDrawer()
-      } else if (e.key.toLowerCase() === 'g' && !s.previewMode) {
-        const r = useReveal.getState()
-        r.setGrowthLine(!r.growthLine)
-      } else if (e.key.toLowerCase() === 'c' && !s.previewMode) {
-        s.setCameraLocked(!s.cameraLocked)
       } else if (e.key.toLowerCase() === 's' && !s.previewMode) {
         s.toggleSunPanel()
       } else if (e.code === 'Space' && tag !== 'BUTTON') {
@@ -70,8 +68,19 @@ export default function App() {
 
   return (
     <div
-      className="ce-app"
-      style={{ '--ce-tl-h': timelineExpanded ? `${tlHeight}px` : 'var(--ce-tl-collapsed)' } as React.CSSProperties}
+      className={`ce-app${previewMode ? ' is-preview' : ''}`}
+      style={{
+        /* preview hides every chrome strip — the timeline's height leaves the
+           frame with it. Anything anchored on --ce-tl-h (the credit strip)
+           would otherwise hover where the timeline WOULD have been, at a
+           height that depends on how we entered preview. Zeroing it means
+           every way in lands on the same pixel. */
+        '--ce-tl-h': previewMode
+          ? '0px'
+          : timelineExpanded
+            ? `${tlHeight}px`
+            : 'var(--ce-tl-collapsed)',
+      } as React.CSSProperties}
     >
       <ViewportStage />
 
