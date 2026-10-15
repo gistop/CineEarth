@@ -172,6 +172,40 @@ export const SunIcon = ({ size = 18, className }: P) => (
   </svg>
 )
 
+/* ── day/night shading modes (SunPanel) ─────────────────────
+   Shared glyph: a hemisphere half-lit, half-dark — the terminator.
+   · DayNightIcon      auto: stock Cesium (shading fades in near ground)
+   · DayNightZoomIcon  always: shading holds at any zoom (magnifier)
+   · DayNightOffIcon   off: shading disabled (slash)                 */
+
+const DAY_NIGHT_HALF = 'M12 3.5a8.5 8.5 0 010 17z'
+
+export const DayNightIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <circle cx="12" cy="12" r="8.5" />
+    <path d={DAY_NIGHT_HALF} fill="currentColor" fillOpacity="0.35" />
+  </svg>
+)
+
+export const DayNightZoomIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <circle cx="10" cy="10" r="6.5" />
+    <path d="M10 3.5a6.5 6.5 0 010 13z" fill="currentColor" fillOpacity="0.35" />
+    <circle cx="17.5" cy="17.5" r="3.2" />
+    <path d="M19.8 19.8l1.7 1.7" />
+  </svg>
+)
+
+export const DayNightOffIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    {/* crossed-out sun (cross rays only, so the diagonal slash never
+        collides with a ray) — the universal "lighting off" glyph */}
+    <circle cx="12" cy="12" r="4.5" />
+    <path d="M12 2.5V5.5M12 18.5v3M2.5 12H5.5M18.5 12h3" />
+    <path d="M5 5l14 14" />
+  </svg>
+)
+
 export const ClockIcon = ({ size = 15, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <circle cx="12" cy="12" r="8.5" />

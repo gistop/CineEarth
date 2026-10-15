@@ -1,16 +1,78 @@
 // Sun & time-of-day panel — the globe is lit by the Cesium clock: setting
 // clock.currentTime moves the sun (direction + day/night terminator).
 // Pure state → viewer sync, so screenshots / video exports pick it up too.
+//
+// Day/night shading has three modes (segmented control at the bottom):
+//  · auto   — Cesium stock: shading fades out as the camera nears the ground
+//             (lightingFadeOut/InDistance ≈ π/2·R → π·R), so close-ups are lit
+//  · always — the fade window is collapsed to ~0: day/night holds at ANY zoom
+//             (a study area stays dark at night even zoomed in)
+//  · off    — enableLighting false: no terminator anywhere; sky & ground
+//             atmosphere drop their dynamic lighting with it (Cesium derives
+//             both from the same globe flags)
 
-import { useEffect, useState } from 'react'
-import { JulianDate } from 'cesium'
+import { useEffect, useState, type ComponentType } from 'react'
+import { JulianDate, type Viewer } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
-import { PlayIcon, PauseIcon, CloseIcon, ClockIcon } from '../../components/Icons'
+import { PlayIcon, PauseIcon, CloseIcon, ClockIcon, DayNightIcon, DayNightZoomIcon, DayNightOffIcon } from '../../components/Icons'
 
 const MINUTES_PER_DAY = 24 * 60
 const PLAYBACK_RATE = 600 // simulated × real time
 const TICK_MS = 100
+
+type LightMode = 'auto' | 'always' | 'off'
+
+const LIGHT_MODES: {
+  id: LightMode
+  label: string
+  title: string
+  Icon: ComponentType<{ size?: number; className?: string }>
+}[] = [
+  {
+    id: 'auto',
+    label: '昼夜（默认）',
+    title: '默认 — 远景有昼夜明暗，贴近地面后自动变亮（Cesium 出厂行为）',
+    Icon: DayNightIcon,
+  },
+  {
+    id: 'always',
+    label: '昼夜（全程）',
+    title: '全程 — 昼夜明暗在任何缩放级别都生效，放大到研究区夜里仍是夜',
+    Icon: DayNightZoomIcon,
+  },
+  {
+    id: 'off',
+    label: '昼夜（关闭）',
+    title: '关闭 — 昼夜明暗完全关闭，地表恒亮，太阳只移动位置不出明暗',
+    Icon: DayNightOffIcon,
+  },
+]
+
+/** push a mode to the live globe. GlobeFS mixes shading by
+ *  fade = clamp((cameraDist - fadeOut) / (fadeIn - fadeOut)) — a ~0 window
+ *  keeps fade pinned at 1 (full shading) for every real camera distance;
+ *  restoring the π-based Cesium defaults hands "auto" back its stock fade. */
+function applyLighting(viewer: Viewer, mode: LightMode): void {
+  const globe = viewer.scene.globe
+  if (mode === 'off') {
+    globe.enableLighting = false
+    return
+  }
+  globe.enableLighting = true
+  if (mode === 'always') {
+    globe.lightingFadeOutDistance = 1
+    globe.lightingFadeInDistance = 2
+    globe.nightFadeOutDistance = 1
+    globe.nightFadeInDistance = 2
+  } else {
+    const r = globe.ellipsoid.minimumRadius
+    globe.lightingFadeOutDistance = Math.PI / 2 * r
+    globe.lightingFadeInDistance = Math.PI * r
+    globe.nightFadeOutDistance = Math.PI / 2 * r
+    globe.nightFadeInDistance = 5 * Math.PI / 2 * r
+  }
+}
 
 function pad2(n: number) {
   return String(n).padStart(2, '0')
@@ -46,6 +108,7 @@ export default function SunPanel() {
     return n.getHours() * 60 + n.getMinutes()
   })
   const [playing, setPlaying] = useState(false)
+  const [lightMode, setLightMode] = useState<LightMode>('auto')
 
   /* time-lapse: 600× — crossing midnight rolls the date forward */
   useEffect(() => {
@@ -62,15 +125,15 @@ export default function SunPanel() {
     return () => window.clearInterval(timer)
   }, [playing])
 
-  /* state → viewer: sun position follows clock time */
+  /* state → viewer: sun position follows clock time; shading mode rides along */
   useEffect(() => {
     if (!open) return
     const viewer = getViewer()
     if (!viewer || viewer.isDestroyed()) return
     viewer.clock.currentTime = JulianDate.fromDate(createLocalDate(dateValue, minuteOfDay))
     viewer.clock.shouldAnimate = false
-    viewer.scene.globe.enableLighting = true
-  }, [open, dateValue, minuteOfDay])
+    applyLighting(viewer, lightMode)
+  }, [open, dateValue, minuteOfDay, lightMode])
 
   if (!open) return null
 
@@ -137,6 +200,22 @@ export default function SunPanel() {
           }}
         />
         <output>{formatTime(rounded)}</output>
+      </div>
+
+      <div className="ce-sun-modes" role="group" aria-label="Day/night shading mode">
+        {LIGHT_MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            className={`ce-sun-mode${lightMode === m.id ? ' is-on' : ''}`}
+            title={m.title}
+            aria-label={m.label}
+            aria-pressed={lightMode === m.id}
+            onClick={() => setLightMode(m.id)}
+          >
+            <m.Icon size={16} />
+          </button>
+        ))}
       </div>
     </section>
   )

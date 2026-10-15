@@ -2279,6 +2279,36 @@
   text-align: right;
 }
 
+/* day/night shading mode — 3-segment control (default / always / off) */
+.ce-sun-modes {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ce-sun-mode {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ce-border);
+  border-radius: calc(var(--ce-radius-sm) - 2px);
+  background: var(--ce-surface);
+  color: var(--ce-text-2);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ce-sun-mode:hover {
+  color: var(--ce-text-1);
+  border-color: var(--ce-border-strong, var(--ce-border));
+}
+.ce-sun-mode.is-on {
+  background: var(--ce-accent);
+  border-color: var(--ce-accent);
+  color: #fff;
+}
+
 /* ============================================================
    Route drawer (right) — mirror of the tools drawer
    ============================================================ */
