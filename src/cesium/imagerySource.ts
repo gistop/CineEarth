@@ -39,9 +39,11 @@ const FADE_MS = 1600
  *  cap merely shows the old behavior, not a broken one) */
 const READY_TIMEOUT_MS = 10_000
 
-/** null = the ink sphere (ion imagery not resolved yet) */
-let current: ImageryProvider | null = null
-const listeners = new Set<(p: ImageryProvider) => void>()
+/** null = the ink sphere (real imagery not resolved yet). An ARRAY — some
+ *  sources ship as a stack (Tianditu = satellite tiles + Chinese label
+ *  overlay); a single-provider service is just a 1-element stack. */
+let current: ImageryProvider[] | null = null
+const listeners = new Set<(p: ImageryProvider[]) => void>()
 
 /* ── opening veil (orbit ring) ─────────────────────────────——
    Fired ONCE — when the FIRST real imagery starts fading in, which is the
@@ -91,8 +93,9 @@ function awaitClear(viewer: Viewer, done: () => void): void {
   viewer.scene.globe.tileLoadProgressEvent.addEventListener(onProgress)
 }
 
-/** replace the shared source and re-dial every subscribed viewport */
-export function setImageryProvider(next: ImageryProvider): void {
+/** replace the shared source (a stack of providers) and re-dial every
+ *  subscribed viewport */
+export function setImageryProviders(next: ImageryProvider[]): void {
   if (next === current) return
   current = next
   listeners.forEach((cb) => cb(next))
@@ -101,18 +104,22 @@ export function setImageryProvider(next: ImageryProvider): void {
 /** smoothstep the layer 0 → 1 over FADE_MS, rendering every step so even
  *  requestRenderMode panes show the whole crossfade (a plain alpha set would
  *  paint exactly one frame at each unrelated render trigger). */
-function fadeIn(viewer: Viewer, layer: ImageryLayer, done: () => void): void {
+function fadeIn(viewer: Viewer, layers: ImageryLayer[], done: () => void): void {
   const t0 = performance.now()
   const step = () => {
     if (viewer.isDestroyed()) return
-    if (!viewer.imageryLayers.contains(layer)) return
+    if (!layers.some((layer) => viewer.imageryLayers.contains(layer))) return
     const k = Math.min(1, (performance.now() - t0) / FADE_MS)
-    layer.alpha = k * k * (3 - 2 * k)
+    layers.forEach((layer) => {
+      layer.alpha = k * k * (3 - 2 * k)
+    })
     viewer.scene.requestRender()
     if (k < 1) requestAnimationFrame(step)
     else done()
   }
-  layer.alpha = 0
+  layers.forEach((layer) => {
+    layer.alpha = 0
+  })
   requestAnimationFrame(step)
 }
 
@@ -130,21 +137,24 @@ function fadeIn(viewer: Viewer, layer: ImageryLayer, done: () => void): void {
  */
 export function bindImagery(viewer: Viewer): () => void {
   viewer.scene.globe.baseColor = INK_SPHERE
-  const listener = (p: ImageryProvider) => {
+  const listener = (providers: ImageryProvider[]) => {
     if (viewer.isDestroyed()) return
     const layers = viewer.imageryLayers
-    const layer = layers.addImageryProvider(p)
-    layer.alpha = 0 /* hidden behind the ink sphere until the queue drains —
-      fading in early would expose the stream mid-refine (blurry → sharp) */
+    const added = providers.map((p) => {
+      const layer = layers.addImageryProvider(p)
+      layer.alpha = 0 /* hidden behind the ink sphere until the queue drains —
+        fading in early would expose the stream mid-refine (blurry → sharp) */
+      return layer
+    })
     awaitClear(viewer, () => {
       if (viewer.isDestroyed()) return
       if (!veilRetired) {
         veilRetired = true
         veilListeners.forEach((cb) => cb()) /* the opening veil retires */
       }
-      fadeIn(viewer, layer, () => {
+      fadeIn(viewer, added, () => {
         if (viewer.isDestroyed()) return
-        while (layers.length > 1) layers.remove(layers.get(0))
+        while (layers.length > added.length) layers.remove(layers.get(0))
         viewer.scene.requestRender()
       })
     })

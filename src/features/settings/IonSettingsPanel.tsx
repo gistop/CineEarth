@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { useIon } from './ionTokenStore'
-import { saveIonToken, clearIonToken, syncTerrain } from './ionTerrain'
+import { saveIonToken, clearIonToken } from './ionTerrain'
 
 const STATUS_LABEL: Record<string, string> = {
   none: 'No token — terrain on the shared default',
@@ -18,8 +18,6 @@ const STATUS_LABEL: Record<string, string> = {
 export default function IonSettingsPanel() {
   const token = useIon((s) => s.token)
   const status = useIon((s) => s.status)
-  const terrainEnabled = useIon((s) => s.terrainEnabled)
-  const setTerrainEnabled = useIon((s) => s.setTerrainEnabled)
 
   const [draft, setDraft] = useState(token)
   useEffect(() => setDraft(token), [token])
@@ -64,19 +62,6 @@ export default function IonSettingsPanel() {
       </div>
 
       <p className={`ce-ion-status is-${status}`}>{STATUS_LABEL[status]}</p>
-
-      <label className="ce-ion-terrain">
-        <input
-          type="checkbox"
-          checked={terrainEnabled}
-          onChange={(e) => {
-            setTerrainEnabled(e.target.checked)
-            void syncTerrain()
-          }}
-        />
-        <span className="ce-row-name">World terrain</span>
-        <span className="ce-row-val">{terrainEnabled ? 'on' : 'off'}</span>
-      </label>
 
       <p className="ce-ion-note">
         Terrain runs on Cesium&rsquo;s shared evaluation token until you add your own. A personal

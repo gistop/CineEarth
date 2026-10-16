@@ -1,26 +1,38 @@
-// Cesium ion glue — bridges the pure token store to Cesium globals & the live viewer.
-// Terrain policy (out of the box):
-//  · user token verified   → world terrain on the user's own ion quota
-//  · no / failed token     → world terrain on CesiumJS's bundled evaluation token
-//  · terrainEnabled off    → smooth ellipsoid
-// Imagery: World Imagery (Bing aerial) replaces the OSM placeholder. Terrain AND
-// imagery are re-created whenever the active token changes — ion resolves a
-// resource's credits (including Cesium's "you are on the default token" notice)
-// from the token in play at creation time, so an old resource keeps showing it.
-// The bundled token is per-release and shared (HTTP 200 verified for asset 2);
-// pasting a personal token lifts the shared quota automatically.
+// Data-source glue — bridges the pure stores (ion token + service pickers)
+// to Cesium globals & the live viewer. One place decides WHAT the globe is
+// made of; every viewport just subscribes (imagerySource / terrainSource).
+//
+// Imagery services:
+//  · ion  — Cesium World Imagery (Bing aerial) via ion. Works on CesiumJS's
+//           bundled evaluation token; a verified personal token lifts quota
+//           (token flow identical to before — see ionTokenStore)
+//  · esri — ArcGIS World Imagery, public service, no key
+//  · tdt  — Tianditu WMTS satellite + Chinese label overlay, free key required
+// Terrain services:
+//  · ion      — Cesium World Terrain (same token story as ion imagery)
+//  · arcgis   — Esri WorldElevation3D/Terrain3D, public, no key, has bathymetry
+//  · ellipsoid— flat sphere, zero network
+//
+// ion resources are re-created whenever the active token changes — ion
+// resolves a resource's credits (including the "default token" notice) from
+// the token in play at creation time, so an old resource keeps showing it.
 
 import {
+  ArcGisMapServerImageryProvider,
+  ArcGISTiledElevationTerrainProvider,
+  EllipsoidTerrainProvider,
   Ion,
+  IonWorldImageryStyle,
+  WebMapTileServiceImageryProvider,
   createWorldImageryAsync,
   createWorldTerrainAsync,
-  EllipsoidTerrainProvider,
-  IonWorldImageryStyle,
+  type ImageryProvider,
 } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
-import { setImageryProvider } from '../../cesium/imagerySource'
+import { setImageryProviders } from '../../cesium/imagerySource'
 import { setTerrainProvider } from '../../cesium/terrainSource'
 import { useIon } from './ionTokenStore'
+import { useDataSource } from './dataSourceStore'
 
 /** asset 2 = Cesium World Imagery (asset 1 = World Terrain); any asset endpoint
     doubles as a token check — it answers 401/403 for a bad key */
@@ -28,6 +40,29 @@ const TERRAIN_ASSET = 2
 
 /** CesiumJS ships a shared evaluation token — capture it before any assignment */
 const DEFAULT_ION_TOKEN = Ion.defaultAccessToken
+
+/* ── keyless public services ────────────────────────────────
+   server.arcgisonline.com is the SAME service as services.arcgisonline.com;
+   the old host is kept because the new one is unreachable on some networks. */
+const ESRI_WORLD_IMAGERY_URL =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+const ESRI_WORLD_ELEVATION_URL =
+  'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer'
+
+const TIANDITU_SUBDOMAINS = ['0', '1', '2', '3', '4', '5', '6', '7']
+
+/** Tianditu WMTS layer — img = satellite tiles, cia = Chinese label overlay */
+function tiandituLayer(layer: 'img' | 'cia', key: string): ImageryProvider {
+  return new WebMapTileServiceImageryProvider({
+    url: `https://t{s}.tianditu.gov.cn/${layer}_w/wmts?service=wmts&request=GetTile&version=1.0.0&LAYER=${layer}&tileMatrixSet=w&TileMatrix={TileMatrix}&TileRow={TileRow}&TileCol={TileCol}&style=default&format=tiles&tk=${encodeURIComponent(key)}`,
+    subdomains: TIANDITU_SUBDOMAINS,
+    layer,
+    style: 'default',
+    format: 'tiles',
+    tileMatrixSetID: 'w',
+    maximumLevel: 18,
+  })
+}
 
 export function applyIonToken(token: string): void {
   Ion.defaultAccessToken = token
@@ -47,7 +82,7 @@ export async function verifyIonToken(token: string): Promise<'valid' | 'invalid'
 }
 
 /**
- * Which token drives terrain right now: the user's (only once verified)
+ * Which token drives ion right now: the user's (only once verified)
  * or the bundled default. During verification we stay on the default so
  * the globe never flickers flat.
  */
@@ -57,76 +92,102 @@ function resolveActiveToken(): string {
   return DEFAULT_ION_TOKEN
 }
 
-let syncSeq = 0
-let lastMode = ''
-let lastTokenKey = ''
+let terrainSeq = 0
+let lastTerrainMode = ''
+let lastTerrainKey = ''
 
 /** Push store state → viewer terrain provider. Safe to call at any time. */
 export async function syncTerrain(): Promise<void> {
-  const seq = ++syncSeq
+  const seq = ++terrainSeq
   const viewer = getViewer()
   if (!viewer) return
 
-  const { terrainEnabled } = useIon.getState()
-  const mode = terrainEnabled ? 'world' : 'ellipsoid'
-  const tokenKey = terrainEnabled ? resolveActiveToken() : '-'
+  const { terrain } = useDataSource.getState()
+  const ds = useDataSource.getState()
+  const tokenKey = terrain === 'ion' ? resolveActiveToken() : '-'
 
-  // no-op guard: re-verification / checkbox toggles must not flicker the globe
-  if (mode === lastMode && tokenKey === lastTokenKey) return
+  // no-op guard: re-verification / re-picks must not flicker the globe
+  if (terrain === lastTerrainMode && tokenKey === lastTerrainKey) return
+  ds.setTerrainState('loading')
 
   try {
-    if (mode === 'world') {
+    if (terrain === 'ion') {
       applyIonToken(tokenKey)
       const provider = await createWorldTerrainAsync()
-      if (seq !== syncSeq) return // superseded by a newer sync
+      if (seq !== terrainSeq) return // superseded by a newer sync
+      setTerrainProvider(provider)
+    } else if (terrain === 'arcgis') {
+      const provider = await ArcGISTiledElevationTerrainProvider.fromUrl(ESRI_WORLD_ELEVATION_URL)
+      if (seq !== terrainSeq) return
       setTerrainProvider(provider)
     } else {
       setTerrainProvider(new EllipsoidTerrainProvider())
     }
-    lastMode = mode
-    lastTokenKey = tokenKey
+    if (seq !== terrainSeq) return
+    lastTerrainMode = terrain
+    lastTerrainKey = tokenKey
+    ds.setTerrainState('idle')
   } catch (err) {
-    console.error('[CineEarth] world terrain failed to load', err)
-    if (seq === syncSeq) setTerrainProvider(new EllipsoidTerrainProvider())
-    lastMode = 'ellipsoid'
-    lastTokenKey = '-'
+    console.error('[CineEarth] terrain source failed — keeping the current terrain', err)
+    if (seq === terrainSeq) ds.setTerrainState('failed')
   }
 }
 
 let imagerySeq = 0
-let lastImageryTokenKey = '\u0000' // sentinel — never equal to a real token key
+let lastImageryKey = '\u0000' // sentinel — never equal to a real key
 
 /**
  * Push store state → the SHARED imagery source (see cesium/imagerySource).
- * Re-created whenever the active token changes: ion derives a resource's
- * credits (including Cesium's "default token" notice) from the token in play
- * when the resource is created, so a layer built with the old token would
- * keep that notice on screen forever.
- * The provider goes through setImageryProvider(), which re-dials EVERY
- * viewport (main globe + panes) — panes no longer capture a stale provider
- * just because they were created before ion resolved.
+ * The provider stack goes through setImageryProviders(), which re-dials
+ * EVERY viewport (main globe + panes) — panes never capture a stale source
+ * just because they were created before the service resolved.
  */
-export async function syncIonImagery(): Promise<void> {
-  const tokenKey = resolveActiveToken()
-  if (tokenKey === lastImageryTokenKey) return
+export async function syncImagery(): Promise<void> {
+  const { imagery, tdtKey } = useDataSource.getState()
+  // a key-requiring service without its key switches nothing — the panel
+  // shows the key input and this stays a no-op until one is saved
+  const identity = imagery === 'tdt' ? `tdt:${tdtKey}` : imagery === 'ion' ? `ion:${resolveActiveToken()}` : imagery
+  if (identity === lastImageryKey) return
+
+  const ds = useDataSource.getState()
+  if (imagery === 'tdt' && !tdtKey) {
+    ds.setImageryState('missing-key')
+    return
+  }
 
   const seq = ++imagerySeq
+  ds.setImageryState('loading')
   try {
-    applyIonToken(tokenKey) // the layer must be requested with the active token
-    const provider = await createWorldImageryAsync({ style: IonWorldImageryStyle.AERIAL })
+    let providers: ImageryProvider[]
+    if (imagery === 'tdt') {
+      providers = [tiandituLayer('img', tdtKey), tiandituLayer('cia', tdtKey)]
+    } else if (imagery === 'esri') {
+      providers = [await ArcGisMapServerImageryProvider.fromUrl(ESRI_WORLD_IMAGERY_URL)]
+    } else {
+      applyIonToken(resolveActiveToken()) // the layer must be requested with the active token
+      providers = [await createWorldImageryAsync({ style: IonWorldImageryStyle.AERIAL })]
+    }
     if (seq !== imagerySeq) return // superseded by a newer sync
     /* broadcast: viewports not yet created read it on construction */
-    setImageryProvider(provider)
-    lastImageryTokenKey = tokenKey
+    setImageryProviders(providers)
+    lastImageryKey = identity
+    ds.setImageryState('idle')
   } catch (err) {
-    console.error('[CineEarth] ion World Imagery failed — keeping the current imagery', err)
+    console.error('[CineEarth] imagery source failed — keeping the current imagery', err)
+    if (seq === imagerySeq) ds.setImageryState('failed')
   }
 }
 
+/** Save the Tianditu key, then re-dial imagery (the only service using it). */
+export async function saveTdtKey(raw: string): Promise<void> {
+  useDataSource.getState().setTdtKey(raw.trim())
+  await syncImagery()
+}
+
 /** Terrain then imagery — the order matters: terrain sync is what applies the token. */
-async function syncIonScene(): Promise<void> {
+async function syncDataSources(): Promise<void> {
   await syncTerrain()
-  await syncIonImagery()
+  await syncImagery()
 }
 
 /** Save button flow: persist → verify → (terrain switches quota on success). */
@@ -139,17 +200,17 @@ export async function saveIonToken(raw: string): Promise<void> {
   useIon.getState().setToken(token)
   const verdict = await verifyIonToken(token)
   useIon.getState().setStatus(verdict)
-  await syncIonScene()
+  await syncDataSources()
 }
 
 export async function clearIonToken(): Promise<void> {
   useIon.getState().resetToken()
-  await syncIonScene()
+  await syncDataSources()
 }
 
 /**
- * App startup: terrain on the bundled token right away, then quietly re-verify a
- * stored token. Imagery is built LAST so it is created with the final token —
+ * App startup: terrain on the bundled token right away, then quietly re-verify
+ * a stored token. Imagery is built LAST so it is created with the final token —
  * building it first would bake the default-token notice into the layer.
  */
 export async function bootstrapIonSettings(): Promise<void> {
@@ -163,5 +224,5 @@ export async function bootstrapIonSettings(): Promise<void> {
     await syncTerrain()
   }
 
-  await syncIonImagery()
+  await syncImagery()
 }

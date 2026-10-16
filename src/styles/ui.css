@@ -2306,7 +2306,66 @@
 .ce-sun-mode.is-on {
   background: var(--ce-accent);
   border-color: var(--ce-accent);
-  color: #fff;
+  color: var(--ce-on-accent); /* flips dark in light-accent themes (bw) */
+}
+
+/* ---------- data sources (Props tab) — imagery/terrain pickers ---------- */
+
+.ce-src-modes {
+  display: flex;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+.ce-src-mode {
+  flex: 1;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ce-border);
+  border-radius: calc(var(--ce-radius-sm) - 2px);
+  background: var(--ce-surface);
+  color: var(--ce-text-2);
+  font-size: 11px;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ce-src-mode:hover {
+  color: var(--ce-text);
+  border-color: var(--ce-border-strong, var(--ce-border));
+}
+.ce-src-mode.is-on {
+  background: var(--ce-accent);
+  border-color: var(--ce-accent);
+  color: var(--ce-on-accent);
+}
+
+/* key input row revealed under a service that needs one (Tianditu) */
+.ce-src-key {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ce-src-key .ce-ion-btn {
+  flex: none;
+}
+.ce-src-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ce-text-3);
+}
+.ce-src-note a {
+  color: var(--ce-text-2);
+}
+.ce-src-status {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ce-text-3);
+}
+.ce-src-status.is-bad {
+  color: var(--ce-danger);
 }
 
 /* ============================================================
