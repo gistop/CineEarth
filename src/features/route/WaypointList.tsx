@@ -1,17 +1,19 @@
 // Waypoint list — one row per camera keyframe; click to select (syncs the mini views).
 
 import { useRoute } from './routeStore'
+import { useT } from '../../i18n'
 
 const fmtDeg = (v: number, positive: string, negative: string) =>
   `${Math.abs(v).toFixed(2)}°${v >= 0 ? positive : negative}`
 
 export default function WaypointList() {
+  const t = useT()
   const waypoints = useRoute((s) => s.route?.waypoints ?? [])
   const selectedId = useRoute((s) => s.selectedWaypointId)
   const select = useRoute((s) => s.selectWaypoint)
 
   if (waypoints.length === 0) {
-    return <p className="ce-hint">No waypoints yet.</p>
+    return <p className="ce-hint">{t('route.noWp')}</p>
   }
 
   return (
@@ -31,7 +33,7 @@ export default function WaypointList() {
               <span className="ce-row-name">
                 {w.lat != null && w.lon != null
                   ? `${fmtDeg(w.lat, 'N', 'S')} · ${fmtDeg(w.lon, 'E', 'W')}`
-                  : '仅姿态关键帧'}
+                  : t('route.poseOnly')}
               </span>
               <span className="ce-wp-sub">
                 {w.height != null ? `${Math.round(w.height)} m` : '—'} ·{' '}

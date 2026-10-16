@@ -12,10 +12,13 @@
 
 export type ThemeId = 'bw' | 'bwo' | 'bwb'
 
+/** label/hint are i18n keys — the dictionaries own the copy */
+import type { I18nKey } from '../../i18n'
+
 export type ThemeDef = {
   id: ThemeId
-  label: string
-  hint: string
+  label: I18nKey
+  hint: I18nKey
 }
 
 /** startup default — the black+orange studio look */
@@ -23,21 +26,9 @@ export const DEFAULT_THEME: ThemeId = 'bwo'
 
 /** the options shown in the Props tab — order is display order */
 export const THEMES: ThemeDef[] = [
-  {
-    id: 'bw',
-    label: '黑白',
-    hint: '近黑底 + 微白字（Linear 风）— 界面退成灰阶，颜色留给地图与数据',
-  },
-  {
-    id: 'bwo',
-    label: '黑白橙',
-    hint: '近黑底 + 微白字 + 橙强调 — 橙只标“当前”（播放头/选中/关键帧），其余灰阶',
-  },
-  {
-    id: 'bwb',
-    label: '黑白蓝',
-    hint: '近黑底 + 微白字 + 蓝强调（QGIS/ArcGIS 暗色观感）— 蓝与水体、阴影同色域，叠分类 mask 前留意',
-  },
+  { id: 'bw', label: 'theme.bw.name', hint: 'theme.bw.hint' },
+  { id: 'bwo', label: 'theme.bwo.name', hint: 'theme.bwo.hint' },
+  { id: 'bwb', label: 'theme.bwb.name', hint: 'theme.bwb.hint' },
 ]
 
 const isThemeId = (v: unknown): v is ThemeId => THEMES.some((t) => t.id === v)

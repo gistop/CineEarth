@@ -12,7 +12,7 @@ const clampTlHeight = (h: number) =>
 /** even, clamped pixel size — H.264 needs even dimensions anyway */
 const clampOut = (n: number) => 2 * Math.round(Math.min(Math.max(n, 16), 7680) / 2)
 
-export type DrawerTab = 'layers' | 'shots' | 'properties' | 'assets'
+export type DrawerTab = 'shots' | 'properties' | 'assets'
 
 /** how the chrome relates to the stage — see UIState.layoutMode */
 export type LayoutMode = 'overlay' | 'push'
@@ -104,7 +104,7 @@ interface UIState {
 
 export const useUI = create<UIState>((set) => ({
   drawerOpen: false,
-  drawerTab: 'layers',
+  drawerTab: 'properties',
   rightDrawerOpen: false,
   timelineExpanded: false,
   tlHeight: TL_H_DEFAULT,

@@ -6,29 +6,23 @@
 // with a darkened surround outside the frame).
 
 import { useUI, type LayoutMode } from '../../store/ui'
+import { useT, type I18nKey } from '../../i18n'
 
-const MODES: { id: LayoutMode; label: string; hint: string }[] = [
-  {
-    id: 'push',
-    label: '挤压',
-    hint: '挤压：面板占用真实空间、压缩地图区域；监视窗保持输出画幅（等比居中），编辑窗为 GES 式 —— 画幅框外暗显超范围（仍可见、仍可交互）',
-  },
-  {
-    id: 'overlay',
-    label: '覆盖',
-    hint: '覆盖：面板浮在地图上，地图始终铺满窗口 —— 可见区域最大，但面板会遮住画面',
-  },
+const MODES: { id: LayoutMode; labelKey: I18nKey; hintKey: I18nKey }[] = [
+  { id: 'push', labelKey: 'layout.push', hintKey: 'layout.push.hint' },
+  { id: 'overlay', labelKey: 'layout.overlay', hintKey: 'layout.overlay.hint' },
 ]
 
 export default function LayoutPanel() {
+  const t = useT()
   const layoutMode = useUI((s) => s.layoutMode)
   const setLayoutMode = useUI((s) => s.setLayoutMode)
   const active = MODES.find((m) => m.id === layoutMode)
 
   return (
-    <section className="ce-stack" aria-label="布局模式">
-      <p className="ce-hint">布局模式 — 挤压只改变窗口，画幅保持输出比例</p>
-      <div className="ce-seg" role="radiogroup" aria-label="布局模式">
+    <section className="ce-stack" aria-label={t('layout.title')}>
+      <p className="ce-hint">{t('layout.title')}</p>
+      <div className="ce-seg" role="radiogroup" aria-label={t('layout.title')}>
         {MODES.map((m) => (
           <button
             key={m.id}
@@ -36,14 +30,14 @@ export default function LayoutPanel() {
             role="radio"
             aria-checked={layoutMode === m.id}
             className={`ce-seg-btn${layoutMode === m.id ? ' is-on' : ''}`}
-            title={m.hint}
+            title={t(m.hintKey)}
             onClick={() => setLayoutMode(m.id)}
           >
-            {m.label}
+            {t(m.labelKey)}
           </button>
         ))}
       </div>
-      {active && <p className="ce-hint">{active.hint}</p>}
+      {active && <p className="ce-hint">{t(active.hintKey)}</p>}
     </section>
   )
 }

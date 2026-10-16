@@ -700,6 +700,33 @@
   gap: 2px;
 }
 
+/* ---------- settings sections (Settings tab) ----------
+   Three semantic groups — Data / Scene / Interface — separated by hairlines
+   and small uppercase anchors, so heavy pickers and one-line toggles no
+   longer sit at the same visual level. */
+.ce-settings {
+  display: flex;
+  flex-direction: column;
+}
+.ce-set-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--ce-border);
+}
+.ce-set-group:first-child {
+  border-top: none;
+  padding-top: 2px;
+}
+.ce-set-title {
+  margin: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--ce-text-3);
+}
+
 .ce-hint {
   margin: 6px 6px 8px;
   font-size: 11.5px;

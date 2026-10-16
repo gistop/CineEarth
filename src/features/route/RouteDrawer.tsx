@@ -3,6 +3,7 @@
 
 import { useMemo } from 'react'
 import { useUI } from '../../store/ui'
+import { useT } from '../../i18n'
 import { CloseIcon, RouteIcon } from '../../components/Icons'
 import { buildTrack, totalDuration } from './pathMath'
 import { useRoute } from './routeStore'
@@ -14,6 +15,7 @@ import WaypointList from './WaypointList'
 const fmtKm = (m: number) => `${(m / 1000).toFixed(1)} km`
 
 export default function RouteDrawer() {
+  const t = useT()
   const open = useUI((s) => s.rightDrawerOpen)
   const toggle = useUI((s) => s.toggleRightDrawer)
   const route = useRoute((s) => s.route)
@@ -27,7 +29,7 @@ export default function RouteDrawer() {
       <header className="ce-drawer-head">
         <span className="ce-drawer-title">
           <RouteIcon size={16} />
-          Route
+          {t('route.title')}
         </span>
         <span className="ce-drawer-tools">
           <button
@@ -35,11 +37,11 @@ export default function RouteDrawer() {
             className="ce-ghost-btn"
             disabled={!route}
             onClick={() => setRoute(createDemoRoute())}
-            title={route ? 'Replace the current route with the Matterhorn demo fly-around' : '未选中机位'}
+            title={route ? t('route.demoTitle') : t('route.demoDisabled')}
           >
-            Load demo
+            {t('route.demo')}
           </button>
-          <button type="button" className="ce-icon-btn" onClick={() => toggle(false)} title="Close (Esc)">
+          <button type="button" className="ce-icon-btn" onClick={() => toggle(false)} title={t('drawer.close')}>
             <CloseIcon size={15} />
           </button>
         </span>
@@ -48,7 +50,7 @@ export default function RouteDrawer() {
       {!route ? (
         /* no shot being edited — the route editor has nothing to show */
         <div className="ce-drawer-body ce-route-body">
-          <p className="ce-hint">未选中机位 — 点击某个机位开始编辑航线。</p>
+          <p className="ce-hint">{t('route.empty')}</p>
         </div>
       ) : (
         /* charts and stats stay pinned; only the waypoint list scrolls */
@@ -64,11 +66,7 @@ export default function RouteDrawer() {
               </span>
             </div>
 
-            <p className="ce-hint">
-              {route.waypoints.length === 0
-                ? 'Click the top-view map to add waypoints — or Load demo for an example.'
-                : 'Waypoints — camera keyframes'}
-            </p>
+            <p className="ce-hint">{route.waypoints.length === 0 ? t('route.addHint') : t('route.wpHint')}</p>
           </div>
           <div className="ce-route-list">
             <WaypointList />

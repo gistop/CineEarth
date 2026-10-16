@@ -15,6 +15,7 @@ import { useEffect, useState, type ComponentType } from 'react'
 import { JulianDate, type Viewer } from 'cesium'
 import { getViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
+import { useT, type I18nKey } from '../../i18n'
 import { PlayIcon, PauseIcon, CloseIcon, ClockIcon, DayNightIcon, DayNightZoomIcon, DayNightOffIcon } from '../../components/Icons'
 
 const MINUTES_PER_DAY = 24 * 60
@@ -25,26 +26,26 @@ type LightMode = 'auto' | 'always' | 'off'
 
 const LIGHT_MODES: {
   id: LightMode
-  label: string
-  title: string
+  labelKey: I18nKey
+  titleKey: I18nKey
   Icon: ComponentType<{ size?: number; className?: string }>
 }[] = [
   {
     id: 'auto',
-    label: '昼夜（默认）',
-    title: '默认 — 远景有昼夜明暗，贴近地面后自动变亮（Cesium 出厂行为）',
+    labelKey: 'sun.mode.auto.label',
+    titleKey: 'sun.mode.auto.title',
     Icon: DayNightIcon,
   },
   {
     id: 'always',
-    label: '昼夜（全程）',
-    title: '全程 — 昼夜明暗在任何缩放级别都生效，放大到研究区夜里仍是夜',
+    labelKey: 'sun.mode.always.label',
+    titleKey: 'sun.mode.always.title',
     Icon: DayNightZoomIcon,
   },
   {
     id: 'off',
-    label: '昼夜（关闭）',
-    title: '关闭 — 昼夜明暗完全关闭，地表恒亮，太阳只移动位置不出明暗',
+    labelKey: 'sun.mode.off.label',
+    titleKey: 'sun.mode.off.title',
     Icon: DayNightOffIcon,
   },
 ]
@@ -99,6 +100,7 @@ function shiftDateInput(dateValue: string, days: number) {
 }
 
 export default function SunPanel() {
+  const t = useT()
   const open = useUI((s) => s.sunOpen)
   const toggleSunPanel = useUI((s) => s.toggleSunPanel)
 
@@ -140,13 +142,13 @@ export default function SunPanel() {
   const rounded = Math.round(minuteOfDay) % MINUTES_PER_DAY
 
   return (
-    <section className="ce-sun-panel" aria-label="Sun & time of day">
+    <section className="ce-sun-panel" aria-label={t('sun.panelAria')}>
       <div className="ce-sun-head">
-        <strong>Sun</strong>
+        <strong>{t('sun.title')}</strong>
         <button
           type="button"
           className={`ce-icon-btn${playing ? ' is-on' : ''}`}
-          title={playing ? 'Pause time (600×)' : 'Play time (600×)'}
+          title={playing ? t('sun.pause') : t('sun.play')}
           aria-pressed={playing}
           onClick={() => setPlaying((p) => !p)}
         >
@@ -155,7 +157,7 @@ export default function SunPanel() {
         <button
           type="button"
           className="ce-icon-btn"
-          title="Reset to now"
+          title={t('sun.reset')}
           onClick={() => {
             const n = new Date()
             setDateValue(formatDateInput(n))
@@ -168,7 +170,7 @@ export default function SunPanel() {
         <button
           type="button"
           className="ce-icon-btn"
-          title="Close (Esc)"
+          title={t('drawer.close')}
           onClick={() => {
             setPlaying(false)
             toggleSunPanel(false)
@@ -182,7 +184,7 @@ export default function SunPanel() {
         className="ce-sun-date"
         type="date"
         value={dateValue}
-        aria-label="Date"
+        aria-label={t('sun.date')}
         onChange={(e) => e.target.value && setDateValue(e.target.value)}
       />
 
@@ -193,7 +195,7 @@ export default function SunPanel() {
           max={MINUTES_PER_DAY - 1}
           step={1}
           value={rounded}
-          aria-label="Time of day"
+          aria-label={t('sun.time')}
           onChange={(e) => {
             setPlaying(false)
             setMinuteOfDay(Number(e.target.value))
@@ -202,14 +204,14 @@ export default function SunPanel() {
         <output>{formatTime(rounded)}</output>
       </div>
 
-      <div className="ce-sun-modes" role="group" aria-label="Day/night shading mode">
+      <div className="ce-sun-modes" role="group" aria-label={t('sun.modeGroup')}>
         {LIGHT_MODES.map((m) => (
           <button
             key={m.id}
             type="button"
             className={`ce-sun-mode${lightMode === m.id ? ' is-on' : ''}`}
-            title={m.title}
-            aria-label={m.label}
+            title={t(m.titleKey)}
+            aria-label={t(m.labelKey)}
             aria-pressed={lightMode === m.id}
             onClick={() => setLightMode(m.id)}
           >

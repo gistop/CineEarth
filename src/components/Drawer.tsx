@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useUI, type DrawerTab } from '../store/ui'
-import { LayersIcon, FilmIcon, TuneIcon, FolderIcon, CloseIcon } from './Icons'
-import IonSettingsPanel from '../features/settings/IonSettingsPanel'
+import { useT, type I18nKey } from '../i18n'
+import { FilmIcon, TuneIcon, FolderIcon, CloseIcon } from './Icons'
 import SceneSettingsPanel from '../features/settings/SceneSettingsPanel'
 import ThemePanel from '../features/settings/ThemePanel'
 import LayoutPanel from '../features/settings/LayoutPanel'
@@ -9,17 +9,10 @@ import DataSourcePanel from '../features/settings/DataSourcePanel'
 import { useAssets } from '../features/assets/assetStore'
 import { importAssetFile, isSupportedAsset, removeAsset, setAssetVisible, zoomToAsset } from '../features/assets/assetScene'
 
-const TABS: { id: DrawerTab; label: string; Icon: typeof LayersIcon }[] = [
-  { id: 'layers', label: 'Layers', Icon: LayersIcon },
-  { id: 'shots', label: 'Shots', Icon: FilmIcon },
-  { id: 'properties', label: 'Props', Icon: TuneIcon },
-  { id: 'assets', label: 'Files', Icon: FolderIcon },
-]
-
-const DEMO_LAYERS = [
-  { name: 'Satellite imagery', opacity: 100, on: true },
-  { name: 'Place labels', opacity: 70, on: true },
-  { name: 'User KML overlays', opacity: 100, on: false },
+const TABS: { id: DrawerTab; labelKey: I18nKey; Icon: typeof FilmIcon }[] = [
+  { id: 'shots', labelKey: 'tab.shots', Icon: FilmIcon },
+  { id: 'properties', labelKey: 'tab.settings', Icon: TuneIcon },
+  { id: 'assets', labelKey: 'tab.assets', Icon: FolderIcon },
 ]
 
 const DEMO_SHOTS = [
@@ -39,6 +32,7 @@ export default function Drawer() {
   const tab = useUI((s) => s.drawerTab)
   const setTab = useUI((s) => s.setDrawerTab)
   const toggle = useUI((s) => s.toggleDrawer)
+  const t = useT()
 
   return (
     <aside id="ce-drawer" className="ce-drawer" data-open={open} aria-hidden={!open}>
@@ -46,13 +40,13 @@ export default function Drawer() {
         <span className="ce-wordmark">
           Cine<i />Earth
         </span>
-        <button type="button" className="ce-icon-btn" onClick={() => toggle(false)} title="Close (Esc)">
+        <button type="button" className="ce-icon-btn" onClick={() => toggle(false)} title={t('drawer.close')}>
           <CloseIcon size={15} />
         </button>
       </header>
 
       <nav className="ce-tabs" role="tablist">
-        {TABS.map(({ id, label, Icon }) => (
+        {TABS.map(({ id, labelKey, Icon }) => (
           <button
             key={id}
             type="button"
@@ -62,38 +56,17 @@ export default function Drawer() {
             onClick={() => setTab(id)}
           >
             <Icon size={15} />
-            <span>{label}</span>
+            <span>{t(labelKey)}</span>
           </button>
         ))}
       </nav>
 
       <div className="ce-drawer-body">
-        {tab === 'layers' && <LayersPanel />}
         {tab === 'shots' && <ShotsPanel />}
-        {tab === 'properties' && <PropsPanel />}
+        {tab === 'properties' && <SettingsPanel />}
         {tab === 'assets' && <AssetsPanel />}
       </div>
     </aside>
-  )
-}
-
-function LayersPanel() {
-  return (
-    <div className="ce-stack">
-      {DEMO_LAYERS.map((l) => (
-        <div key={l.name} className="ce-row">
-          <input type="checkbox" defaultChecked={l.on} aria-label={l.name} />
-          <div className="ce-row-main">
-            <span className="ce-row-name">{l.name}</span>
-            <input type="range" min={0} max={100} defaultValue={l.opacity} aria-label={`${l.name} opacity`} />
-          </div>
-          <span className="ce-row-val">{l.opacity}%</span>
-        </div>
-      ))}
-
-      {/* real settings take over from here — user's own ion token & terrain */}
-      <IonSettingsPanel />
-    </div>
   )
 }
 
@@ -113,14 +86,26 @@ function ShotsPanel() {
   )
 }
 
-function PropsPanel() {
+/** Settings tab — three semantic sections: what feeds the globe (Imagery &
+ *  Terrain), how the scene renders (Scene), how the shell looks (Interface). */
+function SettingsPanel() {
+  const t = useT()
   return (
-    <>
-      <DataSourcePanel />
-      <LayoutPanel />
-      <ThemePanel />
-      <SceneSettingsPanel />
-    </>
+    <div className="ce-settings">
+      <section className="ce-set-group" aria-label={t('set.imageryTerrain')}>
+        <h3 className="ce-set-title">{t('set.imageryTerrain')}</h3>
+        <DataSourcePanel />
+      </section>
+      <section className="ce-set-group" aria-label={t('set.scene')}>
+        <h3 className="ce-set-title">{t('set.scene')}</h3>
+        <SceneSettingsPanel />
+      </section>
+      <section className="ce-set-group" aria-label={t('set.interface')}>
+        <h3 className="ce-set-title">{t('set.interface')}</h3>
+        <LayoutPanel />
+        <ThemePanel />
+      </section>
+    </div>
   )
 }
 
@@ -128,6 +113,7 @@ function AssetsPanel() {
   const assets = useAssets((s) => s.assets)
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const t = useT()
 
   const importFiles = (files: FileList | null) => {
     if (!files) return
@@ -158,10 +144,8 @@ function AssetsPanel() {
         }}
       >
         <FolderIcon size={20} />
-        <span>Drop .glb / .gltf models, KML / KMZ overlays, Excel points or shapefile zips here</span>
-        <span className="ce-dropzone-sub">
-          or click to browse — models land at view centre; KML / Excel keep their own coordinates
-        </span>
+        <span>{t('assets.drop.main')}</span>
+        <span className="ce-dropzone-sub">{t('assets.drop.sub')}</span>
       </div>
       <input
         ref={inputRef}
@@ -179,7 +163,7 @@ function AssetsPanel() {
         <div
           key={a.id}
           className="ce-row ce-asset-row"
-          title={a.status === 'error' ? (a.error ?? 'load failed') : 'Double-click to frame'}
+          title={a.status === 'error' ? (a.error ?? t('assets.loadFailed')) : t('assets.frame')}
           onDoubleClick={() => zoomToAsset(a.id)}
         >
           <input
@@ -197,7 +181,7 @@ function AssetsPanel() {
           <button
             type="button"
             className="ce-icon-btn"
-            title="Remove"
+            title={t('assets.remove')}
             onClick={() => removeAsset(a.id)}
           >
             <CloseIcon size={12} />

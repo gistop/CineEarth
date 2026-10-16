@@ -1,58 +1,87 @@
-// Props tab blocks — 界面主题 picker + 轨道值柱 switch. Both are style /
-// display toggles backed by the ui store. The theme options come from the
-// THEMES registry, so future themes are data, not markup; each option carries
-// a 3-chip swatch strip painted with THAT theme's fixed colors (not tokens —
-// the preview must keep its look whatever the app currently wears).
+// Interface-theme picker + track value bars + language switch — all style /
+// display toggles backed by the ui & i18n stores. The theme options come from
+// the THEMES registry (data, not markup); each option carries a 3-chip swatch
+// strip painted with THAT theme's fixed colors (not tokens — the preview must
+// keep its look whatever the app currently wears). Language names render in
+// their own tongue (English / 中文) by convention, so the picker reads the
+// same in both locales.
 
 import { useUI } from '../../store/ui'
+import { useI18n, useT, type Locale } from '../../i18n'
 import { THEMES } from './theme'
 
+const LOCALES: { id: Locale; labelKey: 'lang.en' | 'lang.zh' }[] = [
+  { id: 'en', labelKey: 'lang.en' },
+  { id: 'zh', labelKey: 'lang.zh' },
+]
+
 export default function ThemePanel() {
+  const t = useT()
   const theme = useUI((s) => s.theme)
   const setTheme = useUI((s) => s.setTheme)
   const laneBars = useUI((s) => s.laneBars)
   const setLaneBars = useUI((s) => s.setLaneBars)
+  const locale = useI18n((s) => s.locale)
+  const setLocale = useI18n((s) => s.setLocale)
 
   return (
     <>
-      <section className="ce-stack" aria-label="界面主题">
-        <p className="ce-hint">界面主题 — 仅样式，立即生效</p>
-        <div className="ce-theme-row" role="radiogroup" aria-label="界面主题">
-          {THEMES.map((t) => (
+      <section className="ce-stack" aria-label={t('theme.title')}>
+        <p className="ce-hint">{t('theme.title')}</p>
+        <div className="ce-theme-row" role="radiogroup" aria-label={t('theme.title')}>
+          {THEMES.map((tm) => (
             <button
-              key={t.id}
+              key={tm.id}
               type="button"
               role="radio"
-              aria-checked={theme === t.id}
-              className={`ce-theme-opt${theme === t.id ? ' is-on' : ''}`}
-              title={t.hint}
-              onClick={() => setTheme(t.id)}
+              aria-checked={theme === tm.id}
+              className={`ce-theme-opt${theme === tm.id ? ' is-on' : ''}`}
+              title={t(tm.hint)}
+              onClick={() => setTheme(tm.id)}
             >
-              <span className={`ce-theme-swatches is-${t.id}`} aria-hidden="true">
+              <span className={`ce-theme-swatches is-${tm.id}`} aria-hidden="true">
                 <i />
                 <i />
                 <i />
               </span>
-              <span className="ce-theme-name">{t.label}</span>
+              <span className="ce-theme-name">{t(tm.label)}</span>
             </button>
           ))}
         </div>
       </section>
 
-      <section className="ce-stack" aria-label="轨道值柱">
-        <p className="ce-hint">轨道值柱 — 柱高表示该时刻通道值的高低</p>
+      <section className="ce-stack" aria-label={t('theme.bars.title')}>
+        <p className="ce-hint">{t('theme.bars.title')}</p>
         <div className="ce-switch-row">
           <button
             type="button"
             role="switch"
             aria-checked={laneBars}
             className={`ce-switch${laneBars ? ' is-on' : ''}`}
-            title="轨道车道内用柱子高低表示值（含缓动形状，HOLD 段为平柱）。曲线模式不受影响"
+            title={t('theme.bars.hint')}
             onClick={() => setLaneBars(!laneBars)}
           >
             <span className="ce-switch-knob" aria-hidden="true" />
           </button>
-          <span className="ce-switch-text">{laneBars ? '显示' : '隐藏'}</span>
+          <span className="ce-switch-text">{laneBars ? t('theme.bars.shown') : t('theme.bars.hidden')}</span>
+        </div>
+      </section>
+
+      <section className="ce-stack" aria-label={t('lang.title')}>
+        <p className="ce-hint">{t('lang.title')}</p>
+        <div className="ce-seg" role="radiogroup" aria-label={t('lang.title')}>
+          {LOCALES.map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              role="radio"
+              aria-checked={locale === l.id}
+              className={`ce-seg-btn${locale === l.id ? ' is-on' : ''}`}
+              onClick={() => setLocale(l.id)}
+            >
+              {t(l.labelKey)}
+            </button>
+          ))}
         </div>
       </section>
     </>
