@@ -127,6 +127,23 @@ export const en = {
   'route.wpHint': 'Waypoints — camera keyframes',
   'route.noWp': 'No waypoints yet.',
   'route.poseOnly': 'Pose-only keyframe',
+
+  /* side view */
+  'route.side.caption': 'Side view · elevation',
+  'route.side.fit': 'Fit route (reset zoom and pan)',
+  'route.side.fitAria': 'Fit route',
+  'route.side.zoomIn': 'Zoom in',
+  'route.side.zoomOut': 'Zoom out',
+  'route.side.aria':
+    'Route elevation profile — drag waypoints vertically to change altitude, drag empty space to pan, zoom with the toolbar buttons or pinch, double-click to reset',
+  'route.side.hint':
+    'Drag a waypoint vertically to set altitude · drag empty space to pan (left/right = along-track, up/down = altitude) · zoom with the toolbar buttons or pinch · double-click to reset',
+
+  /* attitude gauge */
+  'route.attitude.caption': 'Attitude',
+  'route.attitude.aria':
+    'Attitude gauge — outer ring: heading, centre: pitch (drag up/down), inner ring: roll, wedge: field of view',
+  'route.attitude.playhead': 'playhead',
 }
 
 export type I18nKey = keyof typeof en

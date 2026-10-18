@@ -5,9 +5,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { haversineM, samplePath, samplePose, timelineProgressToRoute } from './pathMath'
+import {
+  fractionOfWaypoint,
+  haversineM,
+  samplePath,
+  samplePose,
+  timelineProgressToRoute,
+} from './pathMath'
 import { useRoute } from './routeStore'
 import { MAX_WAYPOINT_HEIGHT_M, type Route } from './types'
+import { PROFILE_STEPS, useTerrainProfile } from './terrainProfile'
+import { useT } from '../../i18n'
 import { ExpandIcon, MinusIcon, PlusIcon } from '../../components/Icons'
 
 const W = 300
@@ -33,6 +41,7 @@ function niceStep(raw: number): number {
 }
 
 export default function RouteSideView({ route }: { route: Route }) {
+  const t = useT()
   const progress = useRoute((s) => s.progress)
   const selectedId = useRoute((s) => s.selectedWaypointId)
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -69,8 +78,12 @@ export default function RouteSideView({ route }: { route: Route }) {
       resolution instead of squashing the dots into a band */
   const yAutoRef = useRef(true)
 
+  /* terrain heights along the same samples as the profile (null = flat
+     ellipsoid or still sampling → plain baseline keeps showing) */
+  const terrain = useTerrainProfile(route)
+
   const geometry = useMemo(() => {
-    const poses = samplePath(route, 140)
+    const poses = samplePath(route, PROFILE_STEPS)
     if (poses.length < 2) return null
 
     // cumulative along-track distance for every sample
@@ -97,17 +110,44 @@ export default function RouteSideView({ route }: { route: Route }) {
     let yRange = dragRangeRef.current ?? null
     if (!yRange && view && !yAutoRef.current) yRange = { min: view.hMin, max: view.hMax }
     if (!yRange) {
-      const vis = pts.filter((p) => p.d >= xRange.min && p.d <= xRange.max)
-      const src = vis.length >= 2 ? vis : pts
-      let lo = Math.min(...src.map((p) => p.h))
-      let hi = Math.max(...src.map((p) => p.h))
+      /* auto-fit of the VISIBLE stretch (full track otherwise), folding in the
+         terrain floor/ceiling so a valley the camera dips into stays on screen;
+         1:1 index alignment with the terrain samples */
+      let lo = Infinity
+      let hi = -Infinity
+      let nVis = 0
+      pts.forEach((p, i) => {
+        if (p.d < xRange.min || p.d > xRange.max) return
+        nVis += 1
+        lo = Math.min(lo, p.h)
+        hi = Math.max(hi, p.h)
+        if (terrain) {
+          const th = terrain[i]
+          if (Number.isFinite(th)) {
+            lo = Math.min(lo, th)
+            hi = Math.max(hi, th)
+          }
+        }
+      })
+      if (nVis < 2) {
+        lo = Math.min(...pts.map((p) => p.h))
+        hi = Math.max(...pts.map((p) => p.h))
+        terrain?.forEach((th) => {
+          if (Number.isFinite(th)) {
+            lo = Math.min(lo, th)
+            hi = Math.max(hi, th)
+          }
+        })
+      }
       if (hi - lo < 50) {
         const mid = (hi + lo) / 2
         lo = mid - 25
         hi = mid + 25
       }
       const pad = (hi - lo) * 0.15
-      yRange = { min: Math.max(0, lo - pad), max: hi + pad }
+      /* terrain-aware fit may dip below sea level (e.g. Turpan); camera-only
+         keeps the old sea-level clamp */
+      yRange = { min: terrain ? lo - pad : Math.max(0, lo - pad), max: hi + pad }
     }
     const { min: hMin, max: hMax } = yRange
     const sx = (d: number) =>
@@ -133,8 +173,19 @@ export default function RouteSideView({ route }: { route: Route }) {
         : Math.max(total / 50, 1)
     const maxSpan = total * 1.6
 
-    return { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt }
-  }, [route, view])
+    /* terrain silhouette: filled polygon down to the chart floor (null while
+       sampling / flat ellipsoid — the dashed sea-level line takes over) */
+    const terrainPath =
+      terrain && terrain.length === pts.length
+        ? `M${terrain
+            .map((th, i) => `${sx(pts[i].d).toFixed(1)} ${sy(th).toFixed(1)}`)
+            .join(' L')} L${sx(total).toFixed(1)} ${(H - PAD_BOTTOM).toFixed(1)} L${sx(0).toFixed(
+            1,
+          )} ${(H - PAD_BOTTOM).toFixed(1)} Z`
+        : null
+
+    return { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt, terrainPath }
+  }, [route, view, terrain])
 
   /* waypoint dot positions in svg space (x by along-track distance, y by
      height) — pose-only waypoints (no position key) have no dot */
@@ -162,7 +213,8 @@ export default function RouteSideView({ route }: { route: Route }) {
   }, [route])
 
   if (!geometry) return null
-  const { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt } = geometry
+  const { pts, total, hMin, hMax, xRange, minSpan, maxSpan, sx, sy, distanceAt, terrainPath } =
+    geometry
 
   const d = pts
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${sx(p.d).toFixed(1)} ${sy(p.h).toFixed(1)}`)
@@ -375,12 +427,12 @@ export default function RouteSideView({ route }: { route: Route }) {
   return (
     <figure className="ce-minimap">
       <figcaption>
-        <span>Side view · elevation</span>
+        <span>{t('route.side.caption')}</span>
         <span className="ce-minimap-tools">
           <button
             type="button"
-            title="Fit route (reset zoom and pan)"
-            aria-label="Fit route"
+            title={t('route.side.fit')}
+            aria-label={t('route.side.fitAria')}
             disabled={!view}
             onClick={fitView}
           >
@@ -388,8 +440,8 @@ export default function RouteSideView({ route }: { route: Route }) {
           </button>
           <button
             type="button"
-            title="Zoom in"
-            aria-label="Zoom in"
+            title={t('route.side.zoomIn')}
+            aria-label={t('route.side.zoomIn')}
             disabled={zoomInMaxed}
             onClick={() => zoomBy(0.5)}
           >
@@ -397,8 +449,8 @@ export default function RouteSideView({ route }: { route: Route }) {
           </button>
           <button
             type="button"
-            title="Zoom out"
-            aria-label="Zoom out"
+            title={t('route.side.zoomOut')}
+            aria-label={t('route.side.zoomOut')}
             disabled={zoomOutMaxed}
             onClick={() => zoomBy(2)}
           >
@@ -410,7 +462,7 @@ export default function RouteSideView({ route }: { route: Route }) {
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Route elevation profile — drag waypoints vertically to change altitude, drag empty space to pan, zoom with the toolbar buttons or pinch, double-click to reset"
+        aria-label={t('route.side.aria')}
         className={[
           'ce-minimap-side',
           dragId ? 'is-dragging' : '',
@@ -425,11 +477,8 @@ export default function RouteSideView({ route }: { route: Route }) {
         onPointerCancel={endDrag}
         onDoubleClick={fitView}
       >
-        <title>
-          Drag a waypoint vertically to set altitude · drag empty space to pan (left/right =
-          along-track, up/down = altitude) · zoom with the toolbar buttons or pinch · double-click
-          to reset
-        </title>
+        <title>{t('route.side.hint')}</title>
+        {terrainPath && <path className="ce-minimap-terrain" d={terrainPath} />}
         <line className="ce-minimap-ground" x1={PAD_X} y1={sy(0)} x2={W - PAD_X} y2={sy(0)} />
         {ticks.map((h) => (
           <g key={h}>
@@ -469,14 +518,4 @@ export default function RouteSideView({ route }: { route: Route }) {
       </svg>
     </figure>
   )
-}
-
-/** progress fraction where waypoint i sits (by segment durations) */
-function fractionOfWaypoint(route: Route, index: number): number {
-  const durations = route.waypoints.map((w) => Math.max(0.1, w.duration || 3))
-  const sum = durations.slice(0, -1).reduce((a, b) => a + b, 0)
-  if (sum <= 0) return 0
-  let acc = 0
-  for (let i = 0; i < index; i += 1) acc += durations[i]
-  return Math.min(1, acc / sum)
 }

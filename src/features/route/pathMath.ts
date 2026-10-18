@@ -480,6 +480,17 @@ export function buildTrack(route: Route): TrackPoint[] {
   return points
 }
 
+/** progress fraction where waypoint i sits (by segment durations) — shared by
+    the side view dots and the attitude gauge */
+export function fractionOfWaypoint(route: Route, index: number): number {
+  const durations = route.waypoints.map((w) => Math.max(0.1, w.duration || 3))
+  const sum = durations.slice(0, -1).reduce((a, b) => a + b, 0)
+  if (sum <= 0) return 0
+  let acc = 0
+  for (let i = 0; i < index; i += 1) acc += durations[i]
+  return Math.min(1, acc / sum)
+}
+
 /** dense polyline sampled from the spline, for drawing the smooth path */
 export function samplePath(route: Route, steps = 120): Pose[] {
   const out: Pose[] = []

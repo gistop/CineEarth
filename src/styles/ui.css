@@ -679,18 +679,26 @@
   padding: 6px 10px 16px;
 }
 
-/* route drawer variant — charts/stats pinned, only the waypoint list scrolls */
+/* route drawer variant — charts/stats pinned on tall screens, only the
+   waypoint list scrolls; when the fixed block (top view + side view +
+   attitude gauge + stats) outgrows the drawer it scrolls on its own
+   instead of being clipped by the body's overflow:hidden */
 .ce-route-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 .ce-route-fixed {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .ce-route-list {
+  /* basis 0 keeps the pinned-chart behaviour on tall screens (no premature
+     shrink); the min-height claws back space for the list when the fixed
+     block outgrows the drawer */
   flex: 1;
-  min-height: 0;
+  min-height: 140px;
   overflow-y: auto;
 }
 
@@ -2598,6 +2606,84 @@
   stroke-width: 1.2;
   stroke-dasharray: 3 3;
   opacity: 0.55;
+}
+/* terrain silhouette under the camera curve (side view) */
+.ce-minimap-terrain {
+  fill: var(--ce-surface);
+  stroke: var(--ce-border-strong);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* ---------- attitude gauge ---------- */
+
+.ce-attitude {
+  touch-action: none;
+  cursor: grab;
+}
+.ce-attitude.is-dragging {
+  cursor: grabbing;
+}
+.ce-attitude-tick {
+  stroke: var(--ce-text-3);
+  stroke-width: 1;
+}
+.ce-attitude-cardinal {
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  fill: var(--ce-text-2);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.ce-attitude-fov {
+  fill: var(--ce-accent-soft);
+  stroke: var(--ce-accent);
+  stroke-width: 0.8;
+}
+.ce-attitude-needle {
+  stroke: var(--ce-accent);
+  stroke-width: 1.6;
+}
+.ce-attitude-ground-fill {
+  fill: var(--ce-surface);
+}
+.ce-attitude-horizon {
+  stroke: var(--ce-border-strong);
+  stroke-width: 1;
+}
+.ce-attitude-pitchline {
+  stroke: var(--ce-border-strong);
+  stroke-width: 0.6;
+  opacity: 0.7;
+}
+.ce-attitude-craft {
+  stroke: var(--ce-text);
+  stroke-width: 1.4;
+  fill: none;
+}
+.ce-attitude-ring {
+  fill: none;
+  stroke: var(--ce-border-strong);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.ce-attitude-rollmark {
+  fill: var(--ce-accent);
+}
+.ce-attitude-badge {
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  color: var(--ce-text-3);
+}
+.ce-attitude-readout {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 2px;
+  font-family: var(--ce-font-mono);
+  font-size: 9px;
+  color: var(--ce-text-2);
 }
 .ce-minimap-drag-tip {
   font-family: var(--ce-font-mono);

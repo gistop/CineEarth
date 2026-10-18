@@ -125,4 +125,20 @@ export const zh: Dict = {
   'route.wpHint': '航点 —— 相机关键帧',
   'route.noWp': '还没有航点。',
   'route.poseOnly': '仅姿态关键帧',
+
+  /* side view */
+  'route.side.caption': '侧视 · 高度剖面',
+  'route.side.fit': '适应航线（重置缩放与平移）',
+  'route.side.fitAria': '适应航线',
+  'route.side.zoomIn': '放大',
+  'route.side.zoomOut': '缩小',
+  'route.side.aria':
+    '航线高度剖面 —— 垂直拖动航点调整高度，拖动空白处平移，工具栏按钮或双指缩放，双击复位',
+  'route.side.hint':
+    '垂直拖动航点设置高度 · 拖动空白处平移（左右 = 沿线距离，上下 = 高度）· 工具栏按钮或双指缩放 · 双击复位',
+
+  /* attitude gauge */
+  'route.attitude.caption': '姿态',
+  'route.attitude.aria': '姿态仪 —— 外圈：朝向；中央：俯仰（上下拖动）；内圈小环：横滚；扇形：视场角',
+  'route.attitude.playhead': '播放头',
 }
