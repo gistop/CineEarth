@@ -4,6 +4,8 @@ import { useRoute } from '../features/route/routeStore'
 import { timelineDuration } from '../features/route/pathMath'
 import { useExport } from '../features/export/exportStore'
 import { renderRouteVideo, takeScreenshot } from '../features/export/actions'
+import { useT } from '../i18n'
+import { useDraw } from '../features/assets/drawStore'
 import TimelineTracks, { TimelineRuler, clampView } from './TimelineTracks'
 // HIDDEN (parked, not removed): growth-line & lock-camera toolbar entries —
 // restore together with their state reads, imports and the G/C hotkeys in App.
@@ -20,10 +22,15 @@ import {
   SkipEndIcon,
   ChevronUpIcon,
   ChevronDownIcon,
+  RulerIcon,
+  PointIcon,
+  PolylineIcon,
+  PolygonIcon,
   ExpandIcon,
   RouteIcon,
   CameraIcon,
   RenderIcon,
+  PenIcon,
 } from './Icons'
 
 /** Bottom timeline — thin transport bar (default) / multi-track editor (expanded). */
@@ -152,6 +159,7 @@ export default function Timeline() {
             <LockIcon />
           </button>
           */}
+          <ToolSplitButton />
           <button
             type="button"
             className={`ce-icon-btn${sunOpen ? ' is-on' : ''}`}
@@ -261,5 +269,102 @@ export default function Timeline() {
           solo / selection survive); the bar's ruler covers scrubbing */}
       <TimelineTracks />
     </footer>
+  )
+}
+
+/* Map-tools button — same icon-button size/shape as its sun/route siblings
+   (no split caret). Click opens a menu that grows UP from the bar: level 1
+   lists tool GROUPS (draw, measure…) as square tiles; clicking a group fans
+   a horizontal row of tool tiles out to the RIGHT (click-to-expand, touch
+   safe). While a tool is active the button shows its state and clicking it
+   again exits the mode. First tool: draw a ground-clamped line; point/
+   polygon & measure are placeholders. */
+function ToolSplitButton() {
+  const t = useT()
+  const drawing = useDraw((s) => s.drawing)
+  const [open, setOpen] = useState(false)
+  const [openGroup, setOpenGroup] = useState<string | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  const closeMenu = () => {
+    setOpen(false)
+    setOpenGroup(null)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) closeMenu()
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [open])
+
+  return (
+    <div className="ce-tools-anchor" ref={rootRef}>
+      <button
+        type="button"
+        className={`ce-icon-btn${drawing ? ' is-on' : ''}`}
+        title={drawing ? t('tools.exitDraw') : t('tools.title')}
+        aria-pressed={drawing}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => (drawing ? useDraw.getState().cancelLine() : setOpen((o) => !o))}
+      >
+        <PenIcon />
+      </button>
+
+      {open && (
+        <div className="ce-tools-menu" role="menu" aria-label={t('tools.menuAria')}>
+          <div className={`ce-tools-item${openGroup === 'draw' ? ' is-open' : ''}`}>
+            <button
+              type="button"
+              className="ce-tools-tile"
+              aria-haspopup="menu"
+              aria-expanded={openGroup === 'draw'}
+              title={t('tools.group.draw')}
+              onClick={() => setOpenGroup((g) => (g === 'draw' ? null : 'draw'))}
+            >
+              <PenIcon size={17} />
+              <span>{t('tools.group.draw')}</span>
+            </button>
+            {openGroup === 'draw' && (
+              <div className="ce-tools-sub" role="menu">
+                <button type="button" className="ce-tools-tile" disabled title={t('tools.soon')}>
+                  <PointIcon />
+                  <span>{t('tools.draw.point')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="ce-tools-tile"
+                  onClick={() => {
+                    closeMenu()
+                    useDraw.getState().startLine()
+                  }}
+                >
+                  <PolylineIcon />
+                  <span>{t('tools.draw.line')}</span>
+                </button>
+                <button type="button" className="ce-tools-tile" disabled title={t('tools.soon')}>
+                  <PolygonIcon />
+                  <span>{t('tools.draw.polygon')}</span>
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="ce-tools-item">
+            <button
+              type="button"
+              className="ce-tools-tile"
+              disabled
+              title={t('tools.group.measure')}
+            >
+              <RulerIcon size={17} />
+              <span>{t('tools.group.measure')}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

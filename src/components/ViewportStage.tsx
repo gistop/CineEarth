@@ -34,6 +34,7 @@ import { programShotAt, useRoute } from '../features/route/routeStore'
 import { hasPosition } from '../features/route/types'
 import { buildShotRouteEntities } from '../features/route/routeEntities'
 import { bindTerrain } from '../cesium/terrainSource'
+import { registerAssetViewer, unregisterAssetViewer } from '../features/assets/assetScene'
 import { applyViewportQuality } from '../cesium/viewportQuality'
 import GlobeViewport from './GlobeViewport'
 
@@ -144,6 +145,10 @@ function ShotPane({
     /* the exporter renders THIS Viewer — register the Program Out monitor so
        the export can resolve it without touching the React tree */
     if (followProgram) setProgramViewer(v)
+    /* every pane watches the ASSET layer too (growth line above all) — the
+       monitor picture must match the editor's, and the exporter renders the
+       Program Out pane: without this the recorded video had no assets */
+    registerAssetViewer(v)
     applyViewportQuality(v, variantRef.current)
     /* GES extent pin (framing.ts): a monitor pane keeps its OUTPUT-frame
        ground extent invariant while the layout reshapes its canvas (timeline
@@ -327,6 +332,10 @@ function ShotPane({
         setProgramViewer(null)
         setProgramRefresh(null)
       }
+      /* hand the shared assets back BEFORE destroy() — destroying this
+         Viewer would otherwise destroy the data sources every other view
+         still shows */
+      unregisterAssetViewer(v)
       if (!v.isDestroyed()) v.destroy()
     }
     /* variant is intentionally NOT a dependency — the dial effect re-dials the

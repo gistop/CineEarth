@@ -16,6 +16,7 @@ import { bootstrapIonSettings } from '../features/settings/ionTerrain'
 import { syncSceneSettings } from '../features/settings/sceneSettings'
 import { applyViewportQuality } from '../cesium/viewportQuality'
 import { bindTerrain } from '../cesium/terrainSource'
+import { registerAssetViewer, unregisterAssetViewer } from '../features/assets/assetScene'
 
 /**
  * 开场轨道环 (the opening ritual) — over the ink sphere: a thin orbit ring
@@ -84,6 +85,8 @@ export default function GlobeViewport() {
         creditContainer: creditRef.current ?? undefined,
       })
       setViewer(viewer)
+      /* the editor globe is the FIRST asset audience (panes join later) */
+      registerAssetViewer(viewer)
       /* Keep the interactive editor at the same full quality as an expanded
          shot pane. Activation must never make the picture sharper or softer. */
       applyViewportQuality(viewer, 'editor')
@@ -192,6 +195,9 @@ export default function GlobeViewport() {
         unsubPinUi()
         viewer?.camera.moveEnd.removeEventListener(onMoveEnd)
         handler.destroy()
+        /* detach the shared assets BEFORE destroy() — a Viewer's destruction
+           would destroy the data sources it still holds */
+        if (viewer) unregisterAssetViewer(viewer)
         setViewer(null)
         viewer?.destroy()
       }

@@ -8,6 +8,7 @@ import { programShotAt, useRoute } from '../route/routeStore'
 import { hasPosition, type Pose } from '../route/types'
 import { applyFraming, frameOf } from '../route/framing'
 import { buildShotRouteEntities } from '../route/routeEntities'
+import { prepareAssetViewer } from '../assets/assetScene'
 import { useExport } from './exportStore'
 import { createStamp, downloadBlob, recordVideo, type RecordPath } from './recorder'
 
@@ -106,6 +107,48 @@ function withRenderScale(viewer: Viewer, outW: number, outH: number): () => void
   }
 }
 
+/** render-time globe grade — sse 1 pulls tiles one LOD level finer than the
+ *  interactive sse 2 (≈4× tiles; a seam between neighbouring LOD levels is
+ *  what read as "near sharp / far blurry"), a fat cache + sibling/ancestor
+ *  preloading keep the warm-up pass's tiles resident through the encode.
+ *  Restores the interactive grade on teardown. */
+function withRecordQuality(viewer: Viewer): () => void {
+  const globe = viewer.scene.globe
+  const prev = {
+    sse: globe.maximumScreenSpaceError,
+    cache: globe.tileCacheSize,
+    siblings: globe.preloadSiblings,
+    ancestors: globe.preloadAncestors,
+  }
+  globe.maximumScreenSpaceError = 1
+  globe.tileCacheSize = 1000
+  globe.preloadSiblings = true
+  globe.preloadAncestors = true
+  return () => {
+    if (viewer.isDestroyed()) return
+    viewer.scene.globe.maximumScreenSpaceError = prev.sse
+    viewer.scene.globe.tileCacheSize = prev.cache
+    viewer.scene.globe.preloadSiblings = prev.siblings
+    viewer.scene.globe.preloadAncestors = prev.ancestors
+  }
+}
+
+/** settle, not just load: tilesLoaded reads true BETWEEN refine waves too —
+ *  a single true lets a half-refined globe (placeholder next to refined =
+ *  the patchwork frames) pass as ready. Require it to HOLD true for three
+ *  consecutive polls. Recording is quality-over-wall-time, so the deadline
+ *  is generous; it only exists so a permanently missing tile cannot hang. */
+function makeWaitTilesLoaded(viewer: Viewer): () => Promise<void> {
+  return async () => {
+    const deadline = performance.now() + 60_000
+    let settled = 0
+    while (settled < 3 && performance.now() < deadline) {
+      settled = viewer.scene.globe.tilesLoaded ? settled + 1 : 0
+      await new Promise((r) => setTimeout(r, 120))
+    }
+  }
+}
+
 /** the cut-together picture: cross cuts re-target entities AND camera inside
  *  the Program Out Viewer. The exporter OWNS this Viewer for the render — the
  *  monitor's own throttled auto-follow is paused for the duration. */
@@ -155,13 +198,19 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
      boost below makes the canvas carry these pixels for real. */
   const out = { width: useUI.getState().outW, height: useUI.getState().outH }
   const restoreScale = withRenderScale(viewer, out.width, out.height)
+  const restoreQuality = withRecordQuality(viewer)
 
   try {
+    await prepareAssetViewer(viewer)
+
     const path: RecordPath = {
       begin: () => {
         /* drop the monitor's live entities — the exporter rebuilds them per
            cut, so the two never draw the same decoration twice */
         viewer.entities.removeAll()
+        /* the assets (growth line above all) are ALREADY mounted on this
+           Viewer — registerAssetViewer keeps every pane sharing them, so the
+           recorded picture is exactly the monitor picture */
         entities = []
         onAirId = null
         syncFrame(0)
@@ -175,14 +224,12 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
       outputSize: out,
       canvas: viewer.canvas,
       path,
-      waitTilesLoaded: async () => {
-        const deadline = performance.now() + 8000 // never hang on missing tiles
-        while (!viewer.scene.globe.tilesLoaded && performance.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 120))
-        }
-      },
+      waitTilesLoaded: makeWaitTilesLoaded(viewer),
       renderFrame: () => viewer.scene.render(),
-      onProgress: (frame, total) => useExport.getState().setProgress(frame / total),
+      warmup: true,
+      /* the progress bar spans warm-up (first half) then the encode pass */
+      onWarmup: (p) => useExport.getState().setProgress(0.5 * p),
+      onProgress: (frame, total) => useExport.getState().setProgress(0.5 + 0.5 * (frame / total)),
       isCancelled: () => useExport.getState().cancelRequested,
     })
 
@@ -195,6 +242,7 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
     useExport.getState().finish(message ?? undefined)
   } finally {
     restoreScale()
+    restoreQuality()
     controller.enableInputs = inputsWereEnabled
     /* hand the Viewer back: clear the exporter's decoration, restore the
        playhead and force the monitor to rebuild its own route decoration */
@@ -247,8 +295,11 @@ async function renderSingleShotVideo(): Promise<void> {
      boost below makes the canvas carry these pixels for real. */
   const out = { width: useUI.getState().outW, height: useUI.getState().outH }
   const restoreScale = withRenderScale(viewer, out.width, out.height)
+  const restoreQuality = withRecordQuality(viewer)
 
   try {
+    await prepareAssetViewer(viewer)
+
     const path: RecordPath = {
       begin: () => {
         const p = samplePose(route, 0)
@@ -271,14 +322,12 @@ async function renderSingleShotVideo(): Promise<void> {
       outputSize: out,
       canvas: viewer.canvas,
       path,
-      waitTilesLoaded: async () => {
-        const deadline = performance.now() + 8000 // never hang on missing tiles
-        while (!viewer.scene.globe.tilesLoaded && performance.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 120))
-        }
-      },
+      waitTilesLoaded: makeWaitTilesLoaded(viewer),
       renderFrame: () => viewer.scene.render(),
-      onProgress: (frame, total) => useExport.getState().setProgress(frame / total),
+      warmup: true,
+      /* the progress bar spans warm-up (first half) then the encode pass */
+      onWarmup: (p) => useExport.getState().setProgress(0.5 * p),
+      onProgress: (frame, total) => useExport.getState().setProgress(0.5 + 0.5 * (frame / total)),
       isCancelled: () => useExport.getState().cancelRequested,
     })
 
@@ -291,6 +340,7 @@ async function renderSingleShotVideo(): Promise<void> {
     useExport.getState().finish(message ?? undefined)
   } finally {
     restoreScale()
+    restoreQuality()
     controller.enableInputs = inputsWereEnabled
   }
 }

@@ -234,6 +234,57 @@ export const MoveIcon = ({ size = 14, className }: P) => (
 export const PinIcon = ({ size = 14, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <path d="M12 21s-6.5-5.4-6.5-10.2A6.5 6.5 0 0118.5 10.8C18.5 15.6 12 21 12 21z" />
+
     <circle cx="12" cy="10.5" r="2.2" />
+  </svg>
+)
+
+/** pen nib — map DRAW mode (drawn lines are authored, not imported) */
+export const PenIcon = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 013 3L8 19l-4 1z" />
+    <path d="M14.5 6.5l3 3" />
+  </svg>
+)
+
+export const CheckIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </svg>
+)
+
+/** level-1 → level-2 cascade affordance in the tools menu */
+export const ChevronRightIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+  </svg>
+)
+
+/** measure group placeholder (tools menu level 1) */
+export const RulerIcon = ({ size = 14, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M3.5 14.5l11-11 6 6-11 11z" />
+    <path d="M7 11l2 2M10 8l2 2M13 5l2 2" />
+  </svg>
+)
+
+/* draw-tool glyphs (tools menu level 2) — solid dot, jointed line, polygon */
+export const PointIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+export const PolylineIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M5 17.5L10.5 8l4 5L19 6.5" />
+    <circle cx="5" cy="17.5" r="1.7" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="6.5" r="1.7" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+export const PolygonIcon = ({ size = 18, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M12 4l7.5 5.5-2.9 8.9H7.4L4.5 9.5z" />
   </svg>
 )

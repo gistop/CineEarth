@@ -999,6 +999,175 @@
   cursor: pointer;
 }
 
+/* drawn-line rows: the expandable style panel wraps onto its own line */
+.ce-asset-row.is-line {
+  flex-wrap: wrap;
+}
+.ce-asset-tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid var(--ce-border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--ce-text-3);
+  white-space: nowrap;
+}
+.ce-asset-style {
+  flex: none;
+}
+
+/* ---------- line style panel (inside the asset row) ---------- */
+
+.ce-line-style {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 2px 2px 26px;
+  border-top: 1px dashed var(--ce-border);
+  margin-top: 4px;
+  cursor: default;
+}
+.ce-line-style-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.ce-line-style-label {
+  width: 44px;
+  flex: none;
+  font-size: 11px;
+  color: var(--ce-text-3);
+}
+.ce-line-style-val {
+  width: 38px;
+  flex: none;
+  font-family: var(--ce-font-mono);
+  font-size: 10px;
+  color: var(--ce-text-2);
+  text-align: right;
+}
+.ce-line-style-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--ce-accent);
+}
+.ce-line-style-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.ce-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--ce-border-strong);
+  padding: 0;
+  cursor: pointer;
+}
+.ce-swatch.is-active {
+  outline: 2px solid var(--ce-accent);
+  outline-offset: 1px;
+}
+.ce-line-style-picker {
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--ce-border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.ce-line-style-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ce-text-2);
+  cursor: pointer;
+  margin-right: 12px;
+}
+.ce-line-style-meta {
+  font-family: var(--ce-font-mono);
+  font-size: 10px;
+  color: var(--ce-text-3);
+}
+
+/* extrusion cross-section palette: little shape tiles (flat/circle/square/…) */
+.ce-line-style-shapes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.ce-shape-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
+  background: transparent;
+  color: var(--ce-text-2);
+  cursor: pointer;
+}
+.ce-shape-btn:hover {
+  background: var(--ce-surface-3, var(--ce-surface));
+  color: var(--ce-text);
+}
+.ce-shape-btn.is-active {
+  border-color: var(--ce-accent);
+  color: var(--ce-accent);
+  box-shadow: inset 0 0 0 1px var(--ce-accent);
+}
+/* glyphs are drawn with the button's currentColor */
+.ce-shape-glyph {
+  display: block;
+  width: 11px;
+  height: 11px;
+  background: currentColor;
+}
+.ce-shape-none .ce-shape-glyph {
+  width: 15px;
+  height: 2px;
+}
+.ce-shape-circle .ce-shape-glyph {
+  border-radius: 50%;
+}
+.ce-shape-square .ce-shape-glyph {
+  width: 10px;
+  height: 10px;
+}
+.ce-shape-rectangle .ce-shape-glyph {
+  width: 15px;
+  height: 8px;
+}
+.ce-shape-ellipse .ce-shape-glyph {
+  width: 15px;
+  height: 8px;
+  border-radius: 50%;
+}
+.ce-shape-diamond .ce-shape-glyph {
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+}
+.ce-shape-triangle .ce-shape-glyph {
+  width: 13px;
+  height: 11px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+/* flat-only knobs grey out while a volume section is active */
+.ce-line-style-row.is-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 /* ---------- bottom timeline ---------- */
 
 .ce-timeline {
@@ -1052,6 +1221,127 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  /* the tools split button's popup menu anchors here and grows upward */
+  position: relative;
+}
+
+/* ---------- map-tools button + upward tile menu ---------- */
+
+/* plain wrapper — the button itself keeps the stock 30x30 icon-button look
+   so it sizes identically to sun / route next to it */
+.ce-tools-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.ce-tools-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 22%);
+}
+.ce-tools-item {
+  position: relative;
+}
+/* square tile: glyph on top, tiny label under — palette, not list, look */
+.ce-tools-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 50px;
+  height: 50px;
+  border: none;
+  border-radius: var(--ce-radius-sm);
+  background: transparent;
+  color: var(--ce-text);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ce-tools-tile:hover:not(:disabled) {
+  background: var(--ce-surface-3, var(--ce-surface));
+  color: var(--ce-text);
+}
+.ce-tools-tile:disabled {
+  color: var(--ce-text-3);
+  opacity: 0.55;
+  cursor: default;
+}
+.ce-tools-item.is-open > .ce-tools-tile {
+  background: var(--ce-accent-soft);
+  color: var(--ce-accent);
+}
+/* level-2: row of tiles fanning out to the right of its group tile */
+.ce-tools-sub {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: -5px;
+  z-index: 31;
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  padding: 5px;
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 22%);
+}
+
+/* ---------- drawing-mode hint pill ---------- */
+
+.ce-draw-hint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--ce-tl-collapsed, 40px) + 12px);
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 14px;
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border-strong);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 25%);
+  font-size: 12px;
+  color: var(--ce-text-2);
+}
+.ce-draw-hint-pts {
+  font-family: var(--ce-font-mono);
+  font-size: 11px;
+  color: var(--ce-text-3);
+}
+.ce-draw-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--ce-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ce-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ce-draw-hint-btn:hover:not(:disabled) {
+  background: var(--ce-surface-3, var(--ce-surface));
+}
+.ce-draw-hint-btn.is-finish {
+  border-color: var(--ce-accent);
+  color: var(--ce-accent);
+}
+.ce-draw-hint-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .ce-play {
@@ -2144,6 +2434,35 @@
 .ce-reveal-key.is-selected {
   background: var(--ce-accent);
 }
+
+/* ----- asset animation tracks (timeline-bound lines, 入口 B) -----
+   The group mirrors the 机位 stack: a .ce-shot header (caret/name/×) over
+   .ce-track channel rows (SoloLabel + ◇ insert), so it inherits that rhythm
+   and needs only its own badge + fixed-height detail pane. */
+/* rows lay flat in .ce-lanes (no wrapper div), so the group's top spacing
+   rides on the header row itself */
+.ce-anim-shot {
+  margin-top: 2px;
+}
+.ce-anim-badge {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 5px;
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
+  font-size: 9px;
+  line-height: 1.3;
+  color: var(--ce-text-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* The asset detail pane needs NO rules of its own: like a camera channel
+   row, the selected lane carries .is-curve and .ce-lanes.is-detail promotes
+   it to the absolute full-pane overlay (all other lanes hide, every label
+   row keeps its 24px rhythm). .ce-anim-curve stays as a semantic marker for
+   future asset-specific pane styling. */
 
 /* Playhead: an axis overlay that spans exactly the lane column (same math
    the grid rows use, written once), so `left: ph × 100%` is pixel-true. */

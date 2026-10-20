@@ -43,6 +43,8 @@ import {
 } from '../features/route/cameraChannels'
 import TimelineSettings from './TimelineSettings'
 import ShotTrack, { ShotAddRow } from './ShotTrack'
+import AssetAnimTracks, { type AnimSolo } from './AssetAnimTracks'
+import { InsertKeyBtn, SoloLabel } from './TimelineWidgets'
 import ValueBars from './ValueBars'
 import { laneValueAt } from './laneValue'
 
@@ -560,7 +562,19 @@ export default function TimelineTracks() {
      renders every row (so the track list never re-flows), while the lanes area
      shows just the selected channel's detail — see .ce-lanes.is-detail. */
   const [solo, setSolo] = useState<TrackId | null>(null)
-  const toggleSolo = (id: TrackId) => setSolo((cur) => (cur === id ? null : id))
+  /* asset detail selection — the SAME single-pane contract, mirrored for the
+     asset curve editor; lifted here so .ce-lanes.is-detail and the mutual
+     exclusion with the camera solo live in one place */
+  const [animSolo, setAnimSolo] = useState<AnimSolo>(null)
+  const toggleSolo = (id: TrackId) => {
+    setSolo((cur) => (cur === id ? null : id))
+    /* ONE detail pane: entering the camera editor leaves the asset editor */
+    setAnimSolo(null)
+  }
+  const changeAnimSolo = (s: AnimSolo) => {
+    setAnimSolo(s)
+    if (s) setSolo(null)
+  }
 
   /* ----- 机位 accordion — MULTI-expand --------------------------------------
      Expansion is a pure VIEW concern, per shot, fully decoupled from the
@@ -1738,7 +1752,7 @@ export default function TimelineTracks() {
       {/* NO ruler row here — the one ruler lives in the transport bar above;
           the lanes grid aligns to its measured edges via --ce-tl-axis-l/r. */}
       {/* lanes scroll vertically when the rows don't fit */}
-      <div className={`ce-lanes${curveId ? ' is-detail' : ''}`} ref={lanesRef}>
+      <div className={`ce-lanes${curveId || animSolo ? ' is-detail' : ''}`} ref={lanesRef}>
       {/* 主输出 (program) — the edit-decision track. Activating a 机位
           anywhere drops its boundary at the playhead (导播式：切换即剪辑);
           this lane adds the refine gestures: drag a boundary = re-time the
@@ -1901,6 +1915,16 @@ export default function TimelineTracks() {
         }}
       />
 
+      {/* asset animation lanes — lines bound to the timeline from the assets
+          panel; same grid rows so everything stays ruler-aligned */}
+      <AssetAnimTracks
+        duration={DURATION}
+        viewStart={viewStart}
+        viewSpan={viewSpan}
+        solo={animSolo}
+        onSoloChange={changeAnimSolo}
+      />
+
       </div>
 
       {/* project settings column — the free strip right of the lane grid
@@ -1985,73 +2009,6 @@ export default function TimelineTracks() {
  *  the LANE column (attribute rows: the value-mapped curve pane), click again
  *  = clear. The label column itself never changes — no row is ever hidden — so
  *  rows without a detail view (growth) render a plain read-only label. */
-function SoloLabel({
-  id,
-  label,
-  value,
-  solo,
-  onToggle,
-}: {
-  id: TrackId
-  label: string
-  value?: string
-  /** the row selection (only needed when the label is a toggle) */
-  solo?: TrackId | null
-  onToggle?: (id: TrackId) => void
-}) {
-  if (!onToggle) {
-    return (
-      <div className="ce-track-label" title={label}>
-        <span className="ce-track-name">{label}</span>
-        {value != null && <span className="ce-track-value">{value}</span>}
-      </div>
-    )
-  }
-  return (
-    <button
-      type="button"
-      className={`ce-track-label${solo === id ? ' is-solo' : ''}`}
-      onClick={() => onToggle(id)}
-      title={`${label} — 单击选中：右侧显示该通道曲线，左侧列表保持全部；再次单击取消`}
-    >
-      <span className="ce-track-name">{label}</span>
-      {value != null && <span className="ce-track-value">{value}</span>}
-    </button>
-  )
-}
-
-/** insert-keyframe button (GES-style attribute row). Renders as a hollow
- *  keyframe diamond that fills on hover. Rows without a key action may
- *  still omit onInsert (renders DISABLED). `group` tags the button with its
- *  insert-group: lon/lat/height share 'position', and CSS (:has) lights the
- *  WHOLE group on hover — one click keys all three, so the hover must read
- *  as one group action. */
-function InsertKeyBtn({
-  label,
-  title,
-  onInsert,
-  group,
-}: {
-  label: string
-  title?: string
-  onInsert?: () => void
-  group?: InsertGroup
-}) {
-  return (
-    <button
-      type="button"
-      className="ce-kf-add"
-      data-group={group}
-      title={title ?? `在播放头处插入${label}关键帧`}
-      aria-label={`插入${label}关键帧`}
-      disabled={!onInsert}
-      onClick={onInsert}
-    >
-      <span className="ce-kf-dot" aria-hidden="true" />
-    </button>
-  )
-}
-
 /** a simple channel row: solo label + kf button + lane of selectable keys.
  *  MULTI-EXPAND: rows render for ANY expanded shot, not just the active one.
  *  `data` re-targets the row at that shot's route (playhead mapping, fps,

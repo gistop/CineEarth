@@ -10,6 +10,8 @@ import SunPanel from './features/settings/SunPanel'
 // feature must not keep a keyboard backdoor. Restore together.
 // import { useReveal } from './features/route/revealStore'
 import { useUI } from './store/ui'
+import { useDraw } from './features/assets/drawStore'
+import DrawHint from './features/assets/DrawHint'
 import { applyTheme } from './features/settings/theme'
 import './styles/ui.css'
 
@@ -46,6 +48,9 @@ export default function App() {
 
       const s = useUI.getState()
       if (e.key === 'Escape') {
+        /* drawing owns Esc first (lineDraw's own listener cancels it) — don't
+           also rip panels open/closed behind the user's back */
+        if (useDraw.getState().drawing) return
         if (s.targetPickMode) s.setTargetPickMode(false)
         else if (s.previewMode) s.setPreviewMode(false)
         else if (s.sunOpen) s.toggleSunPanel(false)
@@ -86,6 +91,9 @@ export default function App() {
 
       {/* imperative bridge: playback loop + route entities (also active in preview) */}
       <RouteSceneBridge />
+
+      {/* drawing-mode hint pill: click-to-add / finish / cancel (touch-safe) */}
+      {!previewMode && <DrawHint />}
 
       {!previewMode && (
         <>

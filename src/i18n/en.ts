@@ -144,6 +144,46 @@ export const en = {
   'route.attitude.aria':
     'Attitude gauge — outer ring: heading, centre: pitch (drag up/down), inner ring: roll, wedge: field of view',
   'route.attitude.playhead': 'playhead',
+
+  /* map tools split button (timeline bar) */
+  'tools.title': 'Map tools',
+  'tools.menuAria': 'Map tools',
+  'tools.exitDraw': 'Drawing — click to cancel',
+  'tools.group.draw': 'Draw',
+  'tools.group.measure': 'Measure',
+  'tools.soon': 'Coming soon',
+  'tools.draw.line': 'Line',
+  'tools.draw.point': 'Point',
+  'tools.draw.polygon': 'Polygon',
+
+  /* drawing mode */
+  'draw.hint': 'Click to add points · double-click or ✓ to finish · Esc to cancel',
+  'draw.finish': 'Finish',
+  'draw.cancel': 'Cancel',
+  'draw.pts': 'pts',
+
+  /* assets panel — drawn lines */
+  'assets.tagDrawn': 'drawn',
+  'assets.style': 'Style',
+  'assets.lineColor': 'Colour',
+  'assets.lineWidth': 'Width',
+  'assets.lineOpacity': 'Opacity',
+  'assets.lineDashed': 'Dashed',
+  'assets.lineClamped': 'Clamp to ground',
+  'assets.lineSection': 'Extrusion',
+  'assets.animAdd': 'Add to timeline (growth / lift)',
+  'assets.animRemove': 'Remove from timeline',
+  'assets.sectionSize': 'Section size',
+  'assets.sectionAspect': 'Aspect',
+  'assets.lineLift': 'Elevation',
+  'assets.shape.none': 'Flat',
+  'assets.shape.circle': 'Circle',
+  'assets.shape.square': 'Square',
+  'assets.shape.rectangle': 'Rectangle',
+  'assets.shape.ellipse': 'Ellipse',
+  'assets.shape.diamond': 'Diamond',
+  'assets.shape.triangle': 'Triangle',
+  'assets.vertices': 'vertices',
 }
 
 export type I18nKey = keyof typeof en

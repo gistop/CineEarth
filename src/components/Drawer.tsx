@@ -1,13 +1,15 @@
 import { useRef, useState } from 'react'
 import { useUI, type DrawerTab } from '../store/ui'
 import { useT, type I18nKey } from '../i18n'
-import { FilmIcon, TuneIcon, FolderIcon, CloseIcon } from './Icons'
+import { FilmIcon, TuneIcon, FolderIcon, CloseIcon, SlidersIcon, GrowthIcon } from './Icons'
 import SceneSettingsPanel from '../features/settings/SceneSettingsPanel'
 import ThemePanel from '../features/settings/ThemePanel'
 import LayoutPanel from '../features/settings/LayoutPanel'
 import DataSourcePanel from '../features/settings/DataSourcePanel'
 import { useAssets } from '../features/assets/assetStore'
-import { importAssetFile, isSupportedAsset, removeAsset, setAssetVisible, zoomToAsset } from '../features/assets/assetScene'
+import { applyLineStyle, importAssetFile, isSupportedAsset, removeAsset, setAssetVisible, zoomToAsset } from '../features/assets/assetScene'
+import { useAnim } from '../features/assets/assetAnimStore'
+import LineStylePanel from '../features/assets/LineStylePanel'
 
 const TABS: { id: DrawerTab; labelKey: I18nKey; Icon: typeof FilmIcon }[] = [
   { id: 'shots', labelKey: 'tab.shots', Icon: FilmIcon },
@@ -111,9 +113,21 @@ function SettingsPanel() {
 
 function AssetsPanel() {
   const assets = useAssets((s) => s.assets)
+  const animTracks = useAnim((s) => s.tracks)
   const [dragOver, setDragOver] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const t = useT()
+
+  /** 入口 B: bind the line to the timeline — its Growth/Lift lanes appear
+      in the tracks editor; toggling rebuilds the entity (Constant ↔ Callback) */
+  const toggleAnim = (id: string) => {
+    const anim = useAnim.getState()
+    if (anim.tracks[id]) anim.removeTrack(id)
+    else anim.addTrack(id)
+    // rebuild so positions switch between static & per-frame evaluation
+    applyLineStyle(id)
+  }
 
   const importFiles = (files: FileList | null) => {
     if (!files) return
@@ -162,7 +176,7 @@ function AssetsPanel() {
       {assets.map((a) => (
         <div
           key={a.id}
-          className="ce-row ce-asset-row"
+          className={`ce-row ce-asset-row${a.kind === 'line' ? ' is-line' : ''}`}
           title={a.status === 'error' ? (a.error ?? t('assets.loadFailed')) : t('assets.frame')}
           onDoubleClick={() => zoomToAsset(a.id)}
         >
@@ -176,8 +190,31 @@ function AssetsPanel() {
             <span className="ce-row-name">
               <span className={`ce-asset-dot is-${a.status}`} />
               {a.name}
+              {a.kind === 'line' && <span className="ce-asset-tag">{t('assets.tagDrawn')}</span>}
             </span>
           </div>
+          {a.kind === 'line' && (
+            <button
+              type="button"
+              className={`ce-icon-btn ce-asset-anim${animTracks[a.id] ? ' is-on' : ''}`}
+              title={animTracks[a.id] ? t('assets.animRemove') : t('assets.animAdd')}
+              aria-pressed={Boolean(animTracks[a.id])}
+              onClick={() => toggleAnim(a.id)}
+            >
+              <GrowthIcon size={13} />
+            </button>
+          )}
+          {a.kind === 'line' && (
+            <button
+              type="button"
+              className={`ce-icon-btn ce-asset-style${expandedId === a.id ? ' is-on' : ''}`}
+              title={t('assets.style')}
+              aria-expanded={expandedId === a.id}
+              onClick={() => setExpandedId(expandedId === a.id ? null : a.id)}
+            >
+              <SlidersIcon size={13} />
+            </button>
+          )}
           <button
             type="button"
             className="ce-icon-btn"
@@ -186,6 +223,7 @@ function AssetsPanel() {
           >
             <CloseIcon size={12} />
           </button>
+          {a.kind === 'line' && expandedId === a.id && <LineStylePanel asset={a} />}
         </div>
       ))}
     </div>
