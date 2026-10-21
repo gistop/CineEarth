@@ -26,7 +26,7 @@ export const useDraw = create<DrawState>((set) => ({
       onEnd: (positions) => {
         handle = null
         set({ drawing: false, pointCount: 0 })
-        if (positions && positions.length >= 2) void createLineAsset(positions)
+        if (positions && positions.length >= 2) return createLineAsset(positions)
       },
     })
     if (handle) set({ drawing: true, pointCount: 0 })

@@ -4,6 +4,7 @@
 // insert-keyframe visuals and semantics live here once.
 
 import type { InsertGroup } from '../features/route/types'
+import { useT } from '../i18n'
 
 /** channel-row label. Plain text when it has no toggle (read-only rows /
  *  rows without a detail view); a BUTTON when soloable: ONE click selects
@@ -25,6 +26,7 @@ export function SoloLabel<T extends string>({
   solo?: T | null
   onToggle?: (id: T) => void
 }) {
+  const t = useT()
   if (!onToggle) {
     return (
       <div className="ce-track-label" title={label}>
@@ -38,7 +40,7 @@ export function SoloLabel<T extends string>({
       type="button"
       className={`ce-track-label${solo === id ? ' is-solo' : ''}`}
       onClick={() => onToggle(id)}
-      title={`${label} — 单击选中：右侧显示该通道曲线，左侧列表保持全部；再次单击取消`}
+      title={t('w.soloTitle', { label })}
     >
       <span className="ce-track-name">{label}</span>
       {value != null && <span className="ce-track-value">{value}</span>}
@@ -63,13 +65,14 @@ export function InsertKeyBtn({
   onInsert?: () => void
   group?: InsertGroup
 }) {
+  const t = useT()
   return (
     <button
       type="button"
       className="ce-kf-add"
       data-group={group}
-      title={title ?? `在播放头处插入${label}关键帧`}
-      aria-label={`插入${label}关键帧`}
+      title={title ?? t('w.insertTitle', { label })}
+      aria-label={t('w.insertAria', { label })}
       disabled={!onInsert}
       onClick={onInsert}
     >

@@ -6,7 +6,9 @@ import { create } from 'zustand'
 const KEY = 'cineearth.sceneSettings'
 
 export interface SceneSettings {
-  /** terrain writes depth — lines/models get hidden behind mountains */
+  /** terrain writes depth — hides lines/volumes behind mountains, but also
+   *  swallows near-ground assets where the rendered LOD differs from the
+   *  sampled surface, so it ships OFF (Props tab can re-enable it) */
   depthTest: boolean
   /** haze painted on the globe surface */
   groundAtmosphere: boolean
@@ -17,7 +19,7 @@ export interface SceneSettings {
 }
 
 const DEFAULTS: SceneSettings = {
-  depthTest: true,
+  depthTest: false,
   groundAtmosphere: true,
   skyAtmosphere: true,
   fog: true,

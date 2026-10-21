@@ -3,6 +3,7 @@ import { useUI } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { timelineDuration, totalDuration } from '../features/route/pathMath'
 import type { InsertStrategy } from '../features/route/types'
+import { useT } from '../i18n'
 
 /** GES-style fixed fps presets */
 const FPS_OPTIONS = [24, 25, 30, 50, 60]
@@ -22,6 +23,7 @@ type LenUnit = 'sec' | 'frame'
  * size — one source of truth for framing and export.
  */
 export default function TimelineSettings() {
+  const t = useT()
   const route = useRoute((s) => s.route)
   const setFps = useRoute((s) => s.setFps)
   const setTimelineLen = useRoute((s) => s.setTimelineLen)
@@ -103,12 +105,12 @@ export default function TimelineSettings() {
     <div className="ce-tl-settings">
       <div className="ce-tl-set">
         <span className="ce-tl-set-name">
-          长度
+          {t('tset.length')}
           {over && (
             <button
               type="button"
               className="ce-tl-warn"
-              title={`内容总长 ${content.toFixed(1)}s — 有关键帧在时长之外（数据已保留）· 点击适配内容总长`}
+              title={t('tset.fit', { dur: content.toFixed(1) })}
               onClick={fitTimeline}
             >
               !
@@ -120,8 +122,8 @@ export default function TimelineSettings() {
             className={`ce-tl-num${over ? ' is-over' : ''}`}
             type="text"
             inputMode="decimal"
-            aria-label="长度"
-            title={`时间轴长度（${unit === 'sec' ? '秒' : '帧'}）— 回车确认`}
+            aria-label={t('tset.length')}
+            title={t('tset.lengthTitle', { unit: unit === 'sec' ? t('tset.sec') : t('tset.frame') })}
             value={draft ?? fmtLen(len, unit)}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commitLen}
@@ -132,46 +134,45 @@ export default function TimelineSettings() {
           />
           <select
             className="ce-tl-sel"
-            aria-label="长度单位"
+            aria-label={t('tset.unitAria')}
             value={unit}
             onChange={(e) => switchUnit(e.target.value as LenUnit)}
           >
-            <option value="sec">秒</option>
-            <option value="frame">帧</option>
+            <option value="sec">{t('tset.sec')}</option>
+            <option value="frame">{t('tset.frame')}</option>
           </select>
         </div>
-        {/* duration-change modifier. Label is 2 chars so it fits the narrow
-            strip — the tooltip carries the full GES wording. */}
-        <label className="ce-tl-check" title="改变时长时，等比缩放现有关键帧的时长">
+        {/* duration-change modifier. The tooltip carries the full GES wording. */}
+        <label className="ce-tl-check" title={t('tset.scaleTitle')}>
           <input type="checkbox" checked={scale} onChange={(e) => setScale(e.target.checked)} />
-          <span>缩放</span>
+          <span>{t('tset.scale')}</span>
         </label>
       </div>
 
       <div className="ce-tl-set">
-        <span className="ce-tl-set-name">插入</span>
+        <span className="ce-tl-set-name">{t('tset.insert')}</span>
         <div className="ce-tl-set-row">
           <select
             className="ce-tl-sel"
-            aria-label="插入策略"
-            title="地图上点击插入航点时段时长的分配方式 — 固定：每段固定时长；均分：时间轴长度等分给所有段，末端关键帧始终落在时间轴末端；距离：按航点间地理距离比例分配。切换只影响之后的插入，不改动现有段"
+            aria-label={t('tset.strategyAria')}
+            title={t('tset.strategyTitle')}
             value={route.insertStrategy}
             onChange={(e) => setInsertStrategy(e.target.value as InsertStrategy)}
           >
-            <option value="fixed">固定</option>
-            <option value="even">均分</option>
-            <option value="distance">距离</option>
+            <option value="fixed">{t('tset.stFixed')}</option>
+            <option value="even">{t('tset.stEven')}</option>
+            <option value="distance">{t('tset.stDist')}</option>
           </select>
         </div>
       </div>
 
       <div className="ce-tl-set">
-        <span className="ce-tl-set-name">帧率</span>
+        <span className="ce-tl-set-name">{t('tset.fps')}</span>
         <div className="ce-tl-set-row">
           <select
             className="ce-tl-sel"
-            aria-label="帧率"
-            title="帧率 (fps)"
+            aria-label={t('tset.fps')}
+            title={t('tset.fpsTitle')}
             value={fps}
             onChange={(e) => setFps(Number(e.target.value))}
           >
@@ -187,14 +188,14 @@ export default function TimelineSettings() {
       </div>
 
       <div className="ce-tl-set">
-        <span className="ce-tl-set-name">尺寸</span>
+        <span className="ce-tl-set-name">{t('tset.size')}</span>
         <div className="ce-tl-set-row">
           <input
             className="ce-tl-num"
             type="text"
             inputMode="numeric"
-            aria-label="宽度"
-            title="输出宽度 (px) — 回车确认；画幅框与导出分辨率同时生效"
+            aria-label={t('tset.widthAria')}
+            title={t('tset.sizeTitle', { dim: t('tset.widthAria') })}
             value={draftW ?? String(outW)}
             onChange={(e) => setDraftW(e.target.value)}
             onBlur={commitSize}
@@ -211,8 +212,8 @@ export default function TimelineSettings() {
             className="ce-tl-num"
             type="text"
             inputMode="numeric"
-            aria-label="高度"
-            title="输出高度 (px) — 回车确认；画幅框与导出分辨率同时生效"
+            aria-label={t('tset.heightAria')}
+            title={t('tset.sizeTitle', { dim: t('tset.heightAria') })}
             value={draftH ?? String(outH)}
             onChange={(e) => setDraftH(e.target.value)}
             onBlur={commitSize}
@@ -230,9 +231,9 @@ export default function TimelineSettings() {
       {/* waypoint count — the old bundled Camera track's only real payload,
           now a read-only stat (keys are authored by clicking the map) */}
       <div className="ce-tl-set">
-        <span className="ce-tl-set-name">关键帧</span>
+        <span className="ce-tl-set-name">{t('tset.keys')}</span>
         <div className="ce-tl-set-row">
-          <span className="ce-tl-stat" title="航点（相机关键帧）数量 — 在地图上点击添加">
+          <span className="ce-tl-stat" title={t('tset.keysTitle')}>
             {route.waypoints.length}
           </span>
         </div>

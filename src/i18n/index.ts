@@ -41,17 +41,24 @@ export const useI18n = create<I18nState>((set) => ({
 
 document.documentElement.lang = useI18n.getState().locale
 
+/** interpolation: '{n} cuts' + {n: 3} → '3 cuts'. Unknown placeholders stay. */
+type Vars = Record<string, string | number>
+function fill(template: string, vars?: Vars): string {
+  if (!vars) return template
+  return template.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m))
+}
+
 /** non-reactive lookup — handlers, module scope, non-React code */
-export function t(key: I18nKey): string {
+export function t(key: I18nKey, vars?: Vars): string {
   const dict = DICTS[useI18n.getState().locale] as Record<I18nKey, string>
-  return dict[key] ?? en[key]
+  return fill(dict[key] ?? en[key], vars)
 }
 
 /** reactive hook for rendered text — re-renders on locale switch */
-export function useT(): (key: I18nKey) => string {
+export function useT(): (key: I18nKey, vars?: Vars) => string {
   const locale = useI18n((s) => s.locale)
-  return (key) => {
+  return (key, vars) => {
     const dict = DICTS[locale] as Record<I18nKey, string>
-    return dict[key] ?? en[key]
+    return fill(dict[key] ?? en[key], vars)
   }
 }

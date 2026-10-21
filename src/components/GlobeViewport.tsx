@@ -56,11 +56,17 @@ function OrbitVeil() {
  */
 export default function GlobeViewport() {
   const hostRef = useRef<HTMLDivElement>(null)
-  const creditRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+
+    // Keep attribution in the app frame: a transformed drag slot becomes
+    // the containing block even for fixed descendants. Cesium owns this
+    // container's contents; create/remove it with the viewer (StrictMode-safe).
+    const creditHost = document.createElement('div')
+    creditHost.className = 'ce-credits'
+    ;(host.closest('.ce-app') ?? document.body).appendChild(creditHost)
 
     let viewer: Viewer | undefined
     try {
@@ -82,7 +88,7 @@ export default function GlobeViewport() {
         fullscreenButton: false,
         infoBox: false,
         selectionIndicator: false,
-        creditContainer: creditRef.current ?? undefined,
+        creditContainer: creditHost,
       })
       setViewer(viewer)
       /* the editor globe is the FIRST asset audience (panes join later) */
@@ -200,8 +206,10 @@ export default function GlobeViewport() {
         if (viewer) unregisterAssetViewer(viewer)
         setViewer(null)
         viewer?.destroy()
+        creditHost.remove()
       }
     } catch (err) {
+      creditHost.remove()
       console.error('[CineEarth] Cesium failed to initialise', err)
     }
   }, [])
@@ -223,8 +231,6 @@ export default function GlobeViewport() {
       {/* the opening ritual: orbit ring over the ink sphere, retired by the
           first imagery crossfade (see OrbitVeil / imagerySource) */}
       <OrbitVeil />
-      {/* ion imagery/terrain attribution — native-style strip, left-aligned above the timeline */}
-      <div ref={creditRef} className="ce-credits" />
     </>
   )
 }

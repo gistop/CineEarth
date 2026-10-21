@@ -35,6 +35,7 @@ import {
 
 /** Bottom timeline — thin transport bar (default) / multi-track editor (expanded). */
 export default function Timeline() {
+  const t = useT()
   const expanded = useUI((s) => s.timelineExpanded)
   const toggleTimeline = useUI((s) => s.toggleTimeline)
   const tlHeight = useUI((s) => s.tlHeight)
@@ -106,8 +107,8 @@ export default function Timeline() {
           className={`ce-tl-resize${resizing ? ' is-active' : ''}`}
           role="separator"
           aria-orientation="horizontal"
-          aria-label="时间轴高度"
-          title="拖动调整高度 · 双击复位"
+          aria-label={t('tl.heightAria')}
+          title={t('tl.heightTitle')}
           tabIndex={0}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
@@ -230,7 +231,7 @@ export default function Timeline() {
           >
             <RouteIcon />
           </button>
-          <button type="button" className="ce-icon-btn" title="Screenshot" onClick={takeScreenshot}>
+          <button type="button" className="ce-icon-btn" title={t('tl.screenshot')} onClick={takeScreenshot}>
             <CameraIcon />
           </button>
           <button
@@ -239,12 +240,12 @@ export default function Timeline() {
             disabled={!route && !rendering}
             title={
               exportStatus === 'error'
-                ? useExport.getState().error ?? 'Render failed'
+                ? useExport.getState().error ?? t('tl.renderFail')
                 : rendering
-                  ? `Rendering ${Math.round(exportProgress * 100)}% — click to cancel`
+                  ? t('tl.rendering', { p: Math.round(exportProgress * 100) })
                   : route
-                    ? 'Render video (MP4)'
-                    : '未选中机位 — 无可渲染的航线'
+                    ? t('tl.render')
+                    : t('tl.renderNoRoute')
             }
             onClick={renderRouteVideo}
           >

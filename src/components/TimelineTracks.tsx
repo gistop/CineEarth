@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useUI } from '../store/ui'
+import { useT, type I18nKey } from '../i18n'
 import { TagIcon } from './Icons'
 import { useRoute, type Shot } from '../features/route/routeStore'
 import { useReveal, DEFAULT_REVEAL_KEYS } from '../features/route/revealStore'
@@ -116,23 +117,25 @@ type KeySpan = {
 /** value range the soloed channel's curve is drawn over */
 type CurveRange = { min: number; max: number }
 
-/** GES 右键菜单 — modes whose name carries 缓 draw handles */
-const EASE_ITEMS: { mode: EaseMode; label: string }[] = [
-  { mode: 'linear', label: '线性' },
-  { mode: 'both', label: '左右缓动' },
-  { mode: 'in', label: '缓入 · 左手柄' },
-  { mode: 'out', label: '缓出 · 右手柄' },
-  { mode: 'hold', label: '跳跃' },
+/** GES 右键菜单 — modes whose name carries 缓 draw handles.
+ *  Labels resolve through the dictionary at RENDER time — a plain string
+ *  here would freeze whatever locale was active at module load. */
+const EASE_ITEMS: { mode: EaseMode; labelKey: I18nKey }[] = [
+  { mode: 'linear', labelKey: 'ease.linear' },
+  { mode: 'both', labelKey: 'ease.both' },
+  { mode: 'in', labelKey: 'ease.in' },
+  { mode: 'out', labelKey: 'ease.out' },
+  { mode: 'hold', labelKey: 'ease.step' },
 ]
 
-/** the seven GES attribute rows, in display order */const CHANNEL_ROWS: { id: ChannelId; label: string; group: InsertGroup }[] = [
-  { id: 'lon', label: '相机经度', group: 'position' },
-  { id: 'lat', label: '相机纬度', group: 'position' },
-  { id: 'height', label: '相机海拔', group: 'position' },
-  { id: 'heading', label: '相机平移', group: 'heading' },
-  { id: 'pitch', label: '相机倾斜', group: 'pitch' },
-  { id: 'roll', label: '相机翻滚', group: 'roll' },
-  { id: 'fov', label: '相机视野', group: 'fov' },
+/** the seven GES attribute rows, in display order */const CHANNEL_ROWS: { id: ChannelId; labelKey: I18nKey; group: InsertGroup }[] = [
+  { id: 'lon', labelKey: 'ch.lon', group: 'position' },
+  { id: 'lat', labelKey: 'ch.lat', group: 'position' },
+  { id: 'height', labelKey: 'ch.height', group: 'position' },
+  { id: 'heading', labelKey: 'ch.heading', group: 'heading' },
+  { id: 'pitch', labelKey: 'ch.pitch', group: 'pitch' },
+  { id: 'roll', labelKey: 'ch.roll', group: 'roll' },
+  { id: 'fov', labelKey: 'ch.fov', group: 'fov' },
 ]
 
 type DragState = {
@@ -215,6 +218,7 @@ type BrushDrag =
  *  drag the brush to pan, drag its end handles to zoom, brush empty space to
  *  select a new window, plain-click to move the playhead, dbl-click to reset. */
 export function TimelineRuler({ view }: { view?: TlView }) {
+  const t = useT()
   const route = useRoute((s) => s.route)
   const progress = useRoute((s) => s.progress)
   const setProgress = useRoute((s) => s.setProgress)
@@ -284,17 +288,13 @@ export function TimelineRuler({ view }: { view?: TlView }) {
     <div
       ref={laneRef}
       className="ce-tl-ruler"
-      title={
-        view
-          ? '拖灰色区域平移 · 拖两端缩放 · 空白处刷选窗口 · 单击定位播放头 · 双击复位全程'
-          : '拖动刮擦播放头'
-      }
+      title={view ? t('ruler.zoomTitle') : t('ruler.scrubTitle')}
       role="slider"
-      aria-label="播放头"
+      aria-label={t('ruler.playhead')}
       aria-valuemin={0}
       aria-valuemax={Math.round(DURATION * 10) / 10}
       aria-valuenow={Math.round(progress * DURATION * 10) / 10}
-      aria-valuetext={`${(progress * DURATION).toFixed(1)} 秒，第 ${frame} 帧`}
+      aria-valuetext={t('ruler.valueText', { s: (progress * DURATION).toFixed(1), f: frame })}
       tabIndex={0}
       onPointerDown={(e) => {
         e.preventDefault()
@@ -491,6 +491,7 @@ function zoomAtView(
  *  cut-link activation cut — the chain greys out). Browsing/activating stay
  *  free: a locked lane is read-only, not hidden. */
 function ProgramLockBtn() {
+  const t = useT()
   const locked = useRoute((s) => s.programLocked)
   const set = useRoute((s) => s.setProgramLocked)
   return (
@@ -498,11 +499,7 @@ function ProgramLockBtn() {
       type="button"
       className={`ce-proglock${locked ? ' is-on' : ''}`}
       aria-pressed={locked}
-      title={
-        locked
-          ? '主输出已锁定 — 切镜与全部编辑被拒绝（可继续浏览/激活机位）'
-          : '锁定主输出 — 防止误编辑（激活切镜、拖动、键盘命令全部只读）'
-      }
+      title={locked ? t('program.lockOn') : t('program.lockOff')}
       onClick={() => set()}
     >
       {locked ? (
@@ -526,6 +523,7 @@ function ProgramLockBtn() {
  *  switching — the program timeline is left untouched. The reader lives in
  *  routeStore.setActiveShot, so EVERY activation entry obeys it at once. */
 function CutLinkBtn() {
+  const t = useT()
   const on = useUI((s) => s.cutLink)
   const toggle = useUI((s) => s.toggleCutLink)
   /* the 轨道锁 outranks the link — a locked lane refuses the cut, and the
@@ -537,7 +535,7 @@ function CutLinkBtn() {
       className={`ce-cutlink${on ? ' is-on' : ''}${locked ? ' is-locked' : ''}`}
       aria-pressed={on}
       disabled={locked}
-      title={locked ? '主输出已锁定 — 激活不再切镜' : on ? '可切镜' : '不切镜'}
+      title={locked ? t('program.cutLocked') : on ? t('program.cutOn') : t('program.cutOff')}
       onClick={() => toggle()}
     >
       {/* two IDENTICAL chain links, same size in both states — linked
@@ -558,6 +556,7 @@ function CutLinkBtn() {
 }
 
 export default function TimelineTracks() {
+  const t = useT()
   /* ONE selected channel drives the LANE column only: the label column always
      renders every row (so the track list never re-flows), while the lanes area
      shows just the selected channel's detail — see .ce-lanes.is-detail. */
@@ -1654,7 +1653,7 @@ export default function TimelineTracks() {
           <ChannelTrack
             key={row.id}
             id={row.id}
-            label={row.label}
+            label={t(row.labelKey)}
             value={shotPose ? formatChannelValue(row.id, shotPose[row.id]) : undefined}
             solo={editable ? solo : null}
             onToggle={editable ? toggleSolo : undefined}
@@ -1694,7 +1693,7 @@ export default function TimelineTracks() {
           </div>
           <div
             className="ce-track-lane ce-reveal-lane"
-            title={editable ? 'Growth % · dbl-click: add key · drag: time / % · dbl-click key: delete' : undefined}
+            title={editable ? t('tl.growthRow') : undefined}
             onDoubleClick={
               editable
                 ? (e) => {
@@ -1719,7 +1718,7 @@ export default function TimelineTracks() {
                 data-key={`gr:${k.id}`}
                 className={`ce-key ce-reveal-key${selected.has(`gr:${k.id}`) ? ' is-selected' : ''}`}
                 style={{ left: `${pct(k.t * shotDur)}%` }}
-                title={`${Math.round(k.value)}% @ ${(k.t * shotDur).toFixed(1)}s`}
+                title={t('tl.growthKey', { v: Math.round(k.value), t: (k.t * shotDur).toFixed(1) })}
                 onDoubleClick={
                   editable
                     ? (e) => {
@@ -1761,9 +1760,9 @@ export default function TimelineTracks() {
         <div className="ce-track-side">
           <div
             className="ce-track-label"
-            title="主输出编排 — 单击段选中（Delete 磁性删除 · 数字键换机位 · 拖动换位）· 双击段换机位 · 拖动边界改切换时间（吸附）· 双击边界删除（合并）· 拖机位到本轨添加镜头 · B 分割 · P 在播放头插入激活机位"
+            title={t('program.title')}
           >
-            <span className="ce-track-name">主输出</span>
+            <span className="ce-track-name">{t('program.label')}</span>
             <CutLinkBtn />
             <ProgramLockBtn />
             <span className="ce-track-value">
@@ -1774,8 +1773,8 @@ export default function TimelineTracks() {
                     (program[programSelection + 1]?.t ?? 1) * DURATION
                   ).toFixed(1)}s`
                 : program.length
-                  ? `${program.length} 次切换`
-                  : '未编排'}
+                  ? t('program.cuts', { n: program.length })
+                  : t('program.unarranged')}
             </span>
           </div>
         </div>
@@ -1819,13 +1818,14 @@ export default function TimelineTracks() {
               }}
               title={
                 seg.shotId
-                  ? `${shotName(seg.shotId)} · ${(seg.t0 * DURATION).toFixed(1)}–${(
-                      seg.t1 * DURATION
-                    ).toFixed(1)}s — 单击选中 · 双击换机位 · 拖动换位 · Delete 删除`
+                  ? t('program.segTitle', {
+                      name: shotName(seg.shotId),
+                      dur: `${(seg.t0 * DURATION).toFixed(1)}–${(seg.t1 * DURATION).toFixed(1)}`,
+                    })
                   : undefined
               }
             >
-              {seg.shotId ? shotName(seg.shotId) : '未编排'}
+              {seg.shotId ? shotName(seg.shotId) : t('program.segEmpty')}
             </div>
           ))}
           {program.map((c, i) => (
@@ -1834,7 +1834,7 @@ export default function TimelineTracks() {
               className="ce-program-cut"
               data-cut={i}
               style={{ left: `${pct(c.t * DURATION)}%` }}
-              title={`${shotName(c.shotId)} @ ${(c.t * DURATION).toFixed(1)}s — 拖动改切换时间（吸附，Alt 自由）· 单击选中后段 · 双击删除（合并）`}
+              title={t('program.boundaryTitle', { name: shotName(c.shotId), t: (c.t * DURATION).toFixed(1) })}
             />
           ))}
           {/* magnetic-move insertion slot indicator */}
@@ -1864,7 +1864,7 @@ export default function TimelineTracks() {
                 top: `${Math.max(8, Math.min(segMenu.y, window.innerHeight - 60 - shots.length * 32))}px`,
               }}
             >
-              <div className="ce-program-menu-hint">切换为…（或按数字键）</div>
+              <div className="ce-program-menu-hint">{t('program.relink')}</div>
               {shots.map((sh, n) => (
                 <button
                   key={sh.id}
@@ -1978,7 +1978,11 @@ export default function TimelineTracks() {
           onContextMenu={(e) => e.preventDefault()}
         >
           <div className="ce-ease-head">
-            {(curveId ? CHANNEL_ROWS.find((r) => r.id === curveId)?.label : '关键帧') ?? ''} 缓动
+            {t('ease.menuTitle', {
+              title: curveId
+                ? t(CHANNEL_ROWS.find((r) => r.id === curveId)?.labelKey ?? 'ease.keyFallback')
+                : t('ease.keyFallback'),
+            })}
           </div>
           {EASE_ITEMS.map((it) => (
             <button
@@ -1989,7 +1993,7 @@ export default function TimelineTracks() {
               }`}
               onClick={() => applyEase(menu.wp, menu.ch, it.mode)}
             >
-              {it.label}
+              {t(it.labelKey)}
             </button>
           ))}
           <button
@@ -1997,7 +2001,7 @@ export default function TimelineTracks() {
             className="ce-ease-item is-quiet"
             onClick={() => applyEase(menu.wp, menu.ch, null)}
           >
-            清除缓动
+            {t('ease.clear')}
           </button>
         </div>
       )}
@@ -2058,6 +2062,7 @@ function ChannelTrack({
 }) {
   /* playhead read — the whole grid re-renders on every progress tick already
      (the parent subscribes), so this costs no extra renders */
+  const t = useT()
   const progress = useRoute((s) => s.progress)
   const route = data
   const tlView = useUI((s) => s.tlView)
@@ -2245,7 +2250,7 @@ function ChannelTrack({
           }}
           onPointerDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
-          aria-label={`编辑${label}关键帧值`}
+          aria-label={t('ch.valueAria', { label })}
         />
       )
     }
@@ -2254,7 +2259,7 @@ function ChannelTrack({
         type="button"
         className={`ce-key-val${flip}${curveMode ? ' is-curve' : ''}`}
         style={pos}
-        title="点击修改该值"
+        title={t('ch.valueTitle')}
         onClick={() => setEdit({ wp: k.wp, keyId: k.keyId, draft: k.raw })}
         onPointerDown={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
@@ -2275,8 +2280,8 @@ function ChannelTrack({
         <button
           type="button"
           className={`ce-kf-vals${vals ? ' is-on' : ''}`}
-          title="显示/隐藏本通道关键帧右下角的值"
-          aria-label="切换本通道关键帧值显示"
+          title={t('ch.valueShow')}
+          aria-label={t('ch.valueToggle')}
           aria-pressed={vals}
           onClick={() => toggleVals(id)}
         >
@@ -2285,11 +2290,7 @@ function ChannelTrack({
         <InsertKeyBtn
           label={label}
           group={group}
-          title={
-            group === 'position'
-              ? '在播放头处插入关键帧（位置组：经度/纬度/海拔 同步落键）'
-              : '在播放头处插入关键帧（仅本通道落键）'
-          }
+          title={group === 'position' ? t('ch.insertPos') : t('ch.insertSolo')}
           onInsert={onInsert}
         />
       </div>
@@ -2346,7 +2347,7 @@ function ChannelTrack({
                     Math.abs(k.tSec - playT) <= liveTol ? ' is-live' : ''
                   }`}
                   style={{ left: `${k.left}%`, top: `${yPct(k.value)}%` }}
-                  title={`${k.title} · 拖动改时间与值 · 右键设置缓动`}
+                  title={t('ch.keyTitle', { title: k.title })}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -2378,7 +2379,7 @@ function ChannelTrack({
                 data-vmin={range?.min}
                 data-vmax={range?.max}
                 style={{ left: `${h.left}%`, top: `${h.top}%` }}
-                title="拖动缓动手柄"
+                title={t('ch.handle')}
               />
             ))}
           </>

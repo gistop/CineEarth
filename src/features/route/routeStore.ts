@@ -8,6 +8,7 @@
 // the active id into the reveal store (per-shot growth keys).
 
 import { create } from 'zustand'
+import { t } from '../../i18n'
 import { useUI } from '../../store/ui'
 import { useReveal } from './revealStore'
 import {
@@ -188,6 +189,17 @@ interface RouteState {
    *  the main grid and the rail — never affects any other shot */
   toggleMinimizedShot: (id: string) => void
 
+  /** stage layout order — the VIEWPORT STAGE's own ordering of shots (main
+   *  grid + rail), INDEPENDENT from the canonical `shots` order: header drags
+   *  rewrite `shots` only, stage handle drags rewrite this only. Shots absent
+   *  from the list fall back to their `shots` position (after the ranked). */
+  stageOrder: string[]
+  /** rewrite the stage layout order wholesale (final, zone-interleaved order) */
+  setStageOrder: (order: string[]) => void
+  /** move shot `id` to `toIndex` in the canonical `shots` array — the timeline
+   *  header drag. Pure reorder: ids, activation and routes untouched. */
+  reorderShots: (id: string, toIndex: number) => void
+
   /** 主输出 (program) — the edit-decision list: which 机位 is on the program
    *  from which playhead moment. Sorted by t; the last cut holds to the end.
    *  An empty program means nothing is 编排 yet. */
@@ -255,7 +267,9 @@ export const useRoute = create<RouteState>((set) => {
 
   const initialShot: Shot = {
     id: createShotId(),
-    name: '机位 1',
+    /* the default name is DATA, stamped at creation with the current locale —
+       renaming it later with the language would rewrite user-edited names */
+    name: t('shot.defaultName', { n: 1 }),
     route: freshRoute(),
     freeCam: null,
   }
@@ -269,6 +283,7 @@ export const useRoute = create<RouteState>((set) => {
   selectedWaypointId: null,
   progress: 0,
   minimizedShotIds: [],
+  stageOrder: [],
   program: [],
   programLocked: false,
   programSelection: null,
@@ -484,27 +499,39 @@ export const useRoute = create<RouteState>((set) => {
   setInsertStrategy: (insertStrategy) => set((s) => (s.route ? patch(s, { ...s.route, insertStrategy }) : {})),
   setTimelineLen: (len, scaleKeys) =>
     set((s) => {
-      if (!s.route) return {}
-      const prev = timelineDuration(s.route)
+      if (!s.route || s.activeShotId == null) return {}
       const next = Math.max(MIN_TIMELINE_LEN, round3(len))
-      if (!scaleKeys) return patch(s, { ...s.route, timelineLen: next })
-      /* 等比缩放: re-time every segment by newLength/oldLength (GES semantics) */
-      const factor = next / prev
-      return patch(s, {
-        ...s.route,
-        timelineLen: next,
-        waypoints: s.route.waypoints.map((w) => ({
-          ...w,
-          duration: Math.max(0.1, round3((w.duration || DEFAULT_WAYPOINT_DURATION) * factor)),
-        })),
-      })
+      /* 长度 is a PROJECT setting — every 机位's timeline shares it. It used
+         to write only the ACTIVE route, so with ≥2 机位 the ruler domain
+         drifted with the edit target (机位 1 set to 5s while 机位 2 silently
+         kept its default 10s). 缩放 re-times each 机位's OWN keys by its own
+         prev→next factor (GES 等比缩放, per route). */
+      const apply = (r: Route): Route =>
+        scaleKeys
+          ? {
+              ...r,
+              timelineLen: next,
+              waypoints: r.waypoints.map((w) => ({
+                ...w,
+                duration: Math.max(
+                  0.1,
+                  round3((w.duration || DEFAULT_WAYPOINT_DURATION) * (next / timelineDuration(r))),
+                ),
+              })),
+            }
+          : { ...r, timelineLen: next }
+      const route = apply(s.route)
+      return { route, shots: s.shots.map((sh) => ({ ...sh, route: apply(sh.route) })) }
     }),
   fitTimeline: () =>
     set((s) => {
-      if (!s.route) return {}
-      const content = totalDuration(s.route)
-      if (content <= 0) return {}
-      return patch(s, { ...s.route, timelineLen: round3(Math.max(MIN_TIMELINE_LEN, content)) })
+      if (!s.route || s.activeShotId == null || s.shots.length === 0) return {}
+      /* fit to the LONGEST 机位's content so no shot loses keys — and every
+         route lands on the SAME length (one shared ruler domain) */
+      const maxContent = Math.max(...s.shots.map((sh) => totalDuration(sh.route)))
+      const next = round3(Math.max(MIN_TIMELINE_LEN, maxContent))
+      const route = { ...s.route, timelineLen: next }
+      return { route, shots: s.shots.map((sh) => ({ ...sh, route: { ...sh.route, timelineLen: next } })) }
     }),
 
   setActiveShot: (id) =>
@@ -552,10 +579,15 @@ export const useRoute = create<RouteState>((set) => {
     }),
   addShot: () =>
     set((s) => {
+      /* Timeline length is a project-wide domain.  A fresh shot used to call
+         freshRoute() with the 10s default, so adding it after changing the
+         project to 5s produced a half-width first bar and a 10.0s second
+         header.  Seed the new route from the current project domain. */
+      const projectLen = s.route?.timelineLen ?? s.shots[0]?.route.timelineLen ?? DEFAULT_TIMELINE_LEN
       const shot: Shot = {
         id: createShotId(),
-        name: `机位 ${s.shots.length + 1}`,
-        route: freshRoute(),
+        name: t('shot.defaultName', { n: s.shots.length + 1 }),
+        route: { ...freshRoute(), timelineLen: projectLen },
         freeCam: null,
       }
       const i = s.shots.findIndex((sh) => sh.id === s.activeShotId)
@@ -572,6 +604,7 @@ export const useRoute = create<RouteState>((set) => {
       const shots = s.shots.filter((sh) => sh.id !== id)
       const wasActive = id === s.activeShotId
       const minimizedShotIds = s.minimizedShotIds.filter((mid) => mid !== id)
+      const stageOrder = s.stageOrder.filter((sid) => sid !== id)
       useReveal.getState().dropShot(id)
       /* deleting the ACTIVE shot always hands the edit target to a neighbour
          (there is never a dangling edit) */
@@ -584,6 +617,7 @@ export const useRoute = create<RouteState>((set) => {
           route: next.route,
           selectedWaypointId: null,
           minimizedShotIds,
+          stageOrder,
           /* the program loses the deleted shot's segments (undoable) */
           ...commit(s, mergeCuts(s.program.filter((c) => c.shotId !== id))),
           programSelection: null,
@@ -597,6 +631,7 @@ export const useRoute = create<RouteState>((set) => {
         route: s.route,
         selectedWaypointId: s.selectedWaypointId,
         minimizedShotIds,
+        stageOrder,
         ...commit(s, mergeCuts(s.program.filter((c) => c.shotId !== id))),
         programSelection: null,
       }
@@ -625,6 +660,15 @@ export const useRoute = create<RouteState>((set) => {
         return { minimizedShotIds: collapsed, activeShotId: null, route: null, selectedWaypointId: null }
       }
       return { minimizedShotIds: collapsed }
+    }),
+  setStageOrder: (order) => set({ stageOrder: order }),
+  reorderShots: (id, toIndex) =>
+    set((s) => {
+      const from = s.shots.findIndex((sh) => sh.id === id)
+      if (from === -1 || toIndex < 0 || toIndex >= s.shots.length || from === toIndex) return {}
+      const shots = [...s.shots]
+      shots.splice(toIndex, 0, shots.splice(from, 1)[0])
+      return { shots }
     }),
   moveProgramCut: (index, t) =>
     set((s) => {

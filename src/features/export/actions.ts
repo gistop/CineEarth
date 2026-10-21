@@ -1,6 +1,7 @@
 // Export actions — glue between UI buttons, the viewer registry and the recorder.
 
 import { type Entity, type Viewer } from 'cesium'
+import { t } from '../../i18n'
 import { getProgramViewer, getViewer, refreshProgramViewer } from '../../cesium/viewerRegistry'
 import { useUI } from '../../store/ui'
 import { samplePose, timelineDuration, timelineProgressToRoute } from '../route/pathMath'
@@ -8,7 +9,7 @@ import { programShotAt, useRoute } from '../route/routeStore'
 import { hasPosition, type Pose } from '../route/types'
 import { applyFraming, frameOf } from '../route/framing'
 import { buildShotRouteEntities } from '../route/routeEntities'
-import { prepareAssetViewer } from '../assets/assetScene'
+import { prepareAssetViewer, withQuietAssetViewers } from '../assets/assetScene'
 import { useExport } from './exportStore'
 import { createStamp, downloadBlob, recordVideo, type RecordPath } from './recorder'
 
@@ -135,16 +136,17 @@ function withRecordQuality(viewer: Viewer): () => void {
 
 /** settle, not just load: tilesLoaded reads true BETWEEN refine waves too —
  *  a single true lets a half-refined globe (placeholder next to refined =
- *  the patchwork frames) pass as ready. Require it to HOLD true for three
- *  consecutive polls. Recording is quality-over-wall-time, so the deadline
+ *  the patchwork frames) pass as ready. Require it to HOLD true for four
+ *  consecutive polls (600ms — wide enough to span a refine wave gap even on
+ *  a busy connection). Recording is quality-over-wall-time, so the deadline
  *  is generous; it only exists so a permanently missing tile cannot hang. */
 function makeWaitTilesLoaded(viewer: Viewer): () => Promise<void> {
   return async () => {
     const deadline = performance.now() + 60_000
     let settled = 0
-    while (settled < 3 && performance.now() < deadline) {
+    while (settled < 4 && performance.now() < deadline) {
       settled = viewer.scene.globe.tilesLoaded ? settled + 1 : 0
-      await new Promise((r) => setTimeout(r, 120))
+      await new Promise((r) => setTimeout(r, 150))
     }
   }
 }
@@ -156,11 +158,11 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
   const s = useRoute.getState()
   const route = s.route ?? s.shots[0]?.route
   if (!route) {
-    useExport.getState().finish('没有可用的机位航线')
+    useExport.getState().finish(t('export.noRoutes'))
     return
   }
   if (s.program.length === 0) {
-    useExport.getState().finish('主输出尚未编排 — 先在时间轴编排切镜')
+    useExport.getState().finish(t('export.notArranged'))
     return
   }
 
@@ -197,8 +199,19 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
      so the push-layout canvas ratio always matches (pure resize). The scale
      boost below makes the canvas carry these pixels for real. */
   const out = { width: useUI.getState().outW, height: useUI.getState().outH }
+
+  /* rendering letterboxes this pane (same CSS reflow the single-shot branch
+     waits out) — give React+CSS a frame, then sync the Cesium canvas BEFORE
+     the scale is computed, or the boost targets a size that no longer exists */
+  await new Promise((r) => requestAnimationFrame(() => r(null)))
+  viewer.resize()
+
   const restoreScale = withRenderScale(viewer, out.width, out.height)
   const restoreQuality = withRecordQuality(viewer)
+  /* other panes keep following the playhead and streaming tiles for their
+     OWN camera regions while we record — quiet them or their load waves
+     stretch ours and patchwork frames slip past the settle poll */
+  const restoreQuiet = withQuietAssetViewers(viewer)
 
   try {
     await prepareAssetViewer(viewer)
@@ -225,7 +238,15 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
       canvas: viewer.canvas,
       path,
       waitTilesLoaded: makeWaitTilesLoaded(viewer),
-      renderFrame: () => viewer.scene.render(),
+      renderFrame: () => {
+        /* widget-grade frame: clock.tick() fires onTick → DataSourceDisplay
+           update → CallbackProperties (the growth line's positions!) are
+           re-evaluated and the dynamic geometry rebuilt. scene.render() alone
+           draws whatever the idle rAF loop last produced — under the heavy
+           encode loop rAF starves and the growth line FROZE mid-record */
+        viewer.clock.tick()
+        viewer.scene.render()
+      },
       warmup: true,
       /* the progress bar spans warm-up (first half) then the encode pass */
       onWarmup: (p) => useExport.getState().setProgress(0.5 * p),
@@ -243,6 +264,7 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
   } finally {
     restoreScale()
     restoreQuality()
+    restoreQuiet()
     controller.enableInputs = inputsWereEnabled
     /* hand the Viewer back: clear the exporter's decoration, restore the
        playhead and force the monitor to rebuild its own route decoration */
@@ -257,14 +279,14 @@ async function renderProgramVideo(viewer: Viewer): Promise<void> {
 async function renderSingleShotVideo(): Promise<void> {
   const viewer = getViewer()
   if (!viewer) {
-    useExport.getState().finish('主视图未就绪')
+    useExport.getState().finish(t('export.noViewer'))
     return
   }
 
   const s = useRoute.getState()
   const route = s.route ?? s.shots[0]?.route
   if (!route) {
-    useExport.getState().finish('没有可用的机位航线')
+    useExport.getState().finish(t('export.noRoutes'))
     return
   }
   // WYSIWYG: a locked camera exports a locked-camera video (growth still animates)
@@ -272,7 +294,7 @@ async function renderSingleShotVideo(): Promise<void> {
   /* exporting needs a flyable path: ≥2 positioned waypoints (pose-only
      keys alone cannot drive the camera) */
   if (route.waypoints.filter(hasPosition).length < 2) {
-    useExport.getState().finish('航线至少需要 2 个位置关键帧')
+    useExport.getState().finish(t('export.needKeys'))
     return
   }
 
@@ -296,6 +318,9 @@ async function renderSingleShotVideo(): Promise<void> {
   const out = { width: useUI.getState().outW, height: useUI.getState().outH }
   const restoreScale = withRenderScale(viewer, out.width, out.height)
   const restoreQuality = withRecordQuality(viewer)
+  /* single-机位 records the MAIN globe — every 机位 pane / thumb still gets
+     quieted for the duration (same tile-bandwidth argument) */
+  const restoreQuiet = withQuietAssetViewers(viewer)
 
   try {
     await prepareAssetViewer(viewer)
@@ -323,7 +348,14 @@ async function renderSingleShotVideo(): Promise<void> {
       canvas: viewer.canvas,
       path,
       waitTilesLoaded: makeWaitTilesLoaded(viewer),
-      renderFrame: () => viewer.scene.render(),
+      renderFrame: () => {
+        /* same widget-grade frame as the program branch — clock.tick()
+           drives the DataSourceDisplay update that re-evaluates the growth
+           line's CallbackProperty every frame (scene.render alone starves
+           it under the heavy encode loop) */
+        viewer.clock.tick()
+        viewer.scene.render()
+      },
       warmup: true,
       /* the progress bar spans warm-up (first half) then the encode pass */
       onWarmup: (p) => useExport.getState().setProgress(0.5 * p),
@@ -341,6 +373,7 @@ async function renderSingleShotVideo(): Promise<void> {
   } finally {
     restoreScale()
     restoreQuality()
+    restoreQuiet()
     controller.enableInputs = inputsWereEnabled
   }
 }

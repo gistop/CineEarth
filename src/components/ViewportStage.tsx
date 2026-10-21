@@ -9,17 +9,21 @@
 //     map) overlays the ACTIVE shot's slot; if the active shot itself is
 //     collapsed, the grid APPENDS one editor slot for it (so collapsing the
 //     active shot costs no grid cell — one leaves, one editor appears).
-// Gestures: single click = activate ONLY (never resizes anything; the panes
-//   are non-interactive monitors, and map gestures on the main globe stay
-//   untouched). 大/小 switching is EXCLUSIVELY the hover buttons (⤡ collapse
-//   on slots / ⤢ expand on thumbs) — no double-click anywhere.
+// Gestures: single click = activate ONLY, and ONLY on main-grid panes (never
+//   resizes anything; the panes are non-interactive monitors, and map gestures
+//   on the main globe stay untouched). Rail thumbs are PURE previews — their
+//   single exit is the ⤢ expand button; activating from the rail would fire
+//   where the feedback isn't (the appended editor slot lands elsewhere in the
+//   grid), so the rail mounts NO click handler at all. 大/小 switching is
+//   EXCLUSIVELY the hover buttons (⤡ collapse on slots / ⤢ expand on thumbs)
+//   — no double-click anywhere.
 // The interactive main globe NEVER remounts: it stays the LAST grid child
 // (an overlay ON TOP of the active/editor slot) and only its gridArea style
 // moves — Cesium camera, Ion bootstrap and gesture handlers survive every
 // layout change, and so does every pane: each slot owns a PERSISTENT
 // ShotPane (key = shot.id), muted while the overlay covers it.
 
-import { useEffect, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   Entity,
   ScreenSpaceEventType,
@@ -36,6 +40,7 @@ import { buildShotRouteEntities } from '../features/route/routeEntities'
 import { bindTerrain } from '../cesium/terrainSource'
 import { registerAssetViewer, unregisterAssetViewer } from '../features/assets/assetScene'
 import { applyViewportQuality } from '../cesium/viewportQuality'
+import { useT } from '../i18n'
 import GlobeViewport from './GlobeViewport'
 
 /* ------------------------------------------------------------------ */
@@ -357,6 +362,7 @@ function gridCols(k: number): number {
 }
 
 export default function ViewportStage() {
+  const t = useT()
   const shots = useRoute((s) => s.shots)
   const activeId = useRoute((s) => s.activeShotId)
   const minimized = useRoute((s) => s.minimizedShotIds)
@@ -369,11 +375,20 @@ export default function ViewportStage() {
   const outH = useUI((s) => s.outH)
   const setActiveShot = useRoute((s) => s.setActiveShot)
   const toggleMinimizedShot = useRoute((s) => s.toggleMinimizedShot)
+  const stageOrder = useRoute((s) => s.stageOrder)
+  const setStageOrder = useRoute((s) => s.setStageOrder)
 
-  /* grid = un-collapsed shots; rail = collapsed ones. Shot order canonical.
+  /* grid = un-collapsed shots; rail = collapsed ones. BASE is the canonical
+     shot order; stageOrder (the drag handles) overrides the RELATIVE order of
+     the shots it lists — unlisted shots keep their canonical position after
+     the ranked ones. View layout and timeline headers stay decoupled.
      大/小 never interacts with editing — see the header note. */
-  const mainIds = shots.filter((sh) => !minimized.includes(sh.id)).map((sh) => sh.id)
-  const railIds = shots.filter((sh) => minimized.includes(sh.id)).map((sh) => sh.id)
+  const rank = new Map(stageOrder.map((id, i) => [id, i]))
+  const stageSorted = [...shots].sort(
+    (a, b) => (rank.get(a.id) ?? shots.length) - (rank.get(b.id) ?? shots.length),
+  ).map((sh) => sh.id)
+  const mainIds = stageSorted.filter((id) => !minimized.includes(id))
+  const railIds = stageSorted.filter((id) => minimized.includes(id))
 
   /* the grid is [Program Out] + un-collapsed shots, PLUS an appended editor
      cell when the ACTIVE shot itself is collapsed (a collapse then costs no
@@ -405,16 +420,145 @@ export default function ViewportStage() {
     shots.find((sh) => sh.id === id)?.route.waypoints.some(hasPosition) ?? false
 
   /* ---- delegated single-click (capture phase) -----------------------------
-     Clicking a pane/thumb does exactly ONE thing: switch the edit target.
+     Clicking a main-grid pane does exactly ONE thing: switch the edit target.
      It never resizes anything (the hover buttons own 大/小), and the main
      globe's own clicks are left entirely to the map. The hover buttons skip
-     this handler — collapsing must not silently re-activate the shot. */
+     this handler — collapsing must not silently re-activate the shot. (Rail
+     thumbs deliberately mount none of this: their one exit is ⤢ expand.) */
   const stageClick = (e: ReactMouseEvent) => {
     const target = e.target as HTMLElement
-    if (target.closest('.ce-slot-min, .ce-thumb-max')) return
+    if (target.closest('.ce-slot-min, .ce-drag-handle')) return
     const id = target.closest<HTMLElement>('[data-shot-id]')?.dataset.shotId
     if (!id || id === activeId) return
     setActiveShot(id)
+  }
+
+  /* ---- stage drag-reorder (pointer capture) -------------------------------
+     One handle per slot/thumb, LEFT of the ⤡/⤢ buttons. Grab → 4px arming
+     threshold → RELEASE-time SWAP, identical in BOTH zones: the grabbed view
+     lifts as a GHOST glued to the pointer (inline transform, direct DOM — no
+     per-frame React churn), its vacated cell wears a dashed placeholder, and
+     the cell under the pointer wears an accent ring. On release the ghost
+     and the ringed cell TRADE PLACES — nothing else moves; dropping on the
+     vacated cell is a no-op. Strictly within one zone (grid↔grid, rail↔rail
+     — crossing zones is exactly what ⤡/⤢ own). Program Out and the appended
+     editor slot never participate. Cells never change geometry mid-drag
+     (equipartitioned grid, fixed-height rail rows), so the rects snapshotted
+     at arm time stay valid for the whole drag. */
+  const [stageDrag, setStageDrag] = useState<{ id: string; zone: 'main' | 'rail' } | null>(null)
+  /* dashed vacancy rect — the ghost's vacated cell, i.e. where the swap
+     partner will land. Set once at arm, cleared on release. */
+  const [ghostPh, setGhostPh] = useState<{
+    top: number
+    left: number
+    width: number
+    height: number
+  } | null>(null)
+  const stageMainRef = useRef<HTMLDivElement>(null)
+  const railRef = useRef<HTMLElement>(null)
+  const dragRef = useRef<{
+    x0: number
+    y0: number
+    zone: 'main' | 'rail'
+    id: string
+    rects: DOMRect[]
+    els?: HTMLElement[]
+    el?: HTMLElement | null
+    hit?: number
+  } | null>(null)
+
+  /* interleave a zone's final sequence back into the full stage order */
+  const writeZoneOrder = (newZone: string[]) => {
+    const zoneSet = new Set(newZone)
+    let k = 0
+    setStageOrder(stageSorted.map((x) => (zoneSet.has(x) ? newZone[k++]! : x)))
+  }
+
+  const handleDown = (e: ReactPointerEvent, zone: 'main' | 'rail', id: string) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragRef.current = { x0: e.clientX, y0: e.clientY, zone, id, rects: [] }
+  }
+  const handleMove = (e: ReactPointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    if (!d.rects.length) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 4) return
+      const root = d.zone === 'main' ? stageMainRef.current : railRef.current
+      if (!root) return
+      const els = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          d.zone === 'main' ? '.ce-slot[data-shot-id]:not(.ce-slot-main)' : '.ce-thumb',
+        ),
+      )
+      d.rects = els.map((el) => el.getBoundingClientRect())
+      if (!d.rects.length) return
+      /* ghost + vacancy + ring — shared by BOTH zones. DOM order == map
+         order, so els[i] ↔ ids[i]. Special case: when the ACTIVE shot's
+         EDITOR overlay is grabbed, the overlay is the visible body — ghost
+         IT (the pane it covers never moves and stays invisible below). */
+      d.els = els
+      const ids = d.zone === 'main' ? mainIds : railIds
+      const from = ids.indexOf(d.id)
+      d.el =
+        (d.zone === 'main' &&
+          root.querySelector<HTMLElement>(`.ce-slot-main[data-shot-id="${d.id}"]`)) ||
+        els[from] ||
+        null
+      /* dashed vacancy in the ghost's old cell — the OTHER half of the swap
+         promise (ring = where the ghost goes, this = where the partner
+         lands). Rects are viewport coords; the rail may be scrolled, so
+         convert to the zone root's content origin. */
+      const r = d.rects[from]
+      if (r) {
+        setGhostPh({
+          top: r.top - root.getBoundingClientRect().top + root.scrollTop,
+          left: r.left - root.getBoundingClientRect().left + root.scrollLeft,
+          width: r.width,
+          height: r.height,
+        })
+      }
+      setStageDrag({ id: d.id, zone: d.zone })
+    }
+    if (d.el) {
+      /* pure translation — NO scale: an oversized ghost overlaps neighbouring
+         cells and muddles the read ("the vacancy has a map in it"). Lift is
+         expressed by shadow + accent ring alone. */
+      d.el.style.transform = `translate(${e.clientX - d.x0}px, ${e.clientY - d.y0}px)`
+    }
+    const hit = d.rects.findIndex(
+      (r) =>
+        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom,
+    )
+    /* drop-target ring follows the pointer frame by frame; ids[hit] !== id
+       covers both the overlay case (its cell's pane is in els, the overlay
+       is not) and the plain "hovering your own cell" case */
+    if (d.els) {
+      const ids = d.zone === 'main' ? mainIds : railIds
+      for (const n of d.els) n.classList.remove('is-drop-hit')
+      if (hit !== -1 && d.els[hit] && ids[hit] !== d.id) d.els[hit].classList.add('is-drop-hit')
+    }
+    /* NO live reorder — the ring is the promise; the swap lands on release */
+    if (hit !== -1) d.hit = hit
+  }
+  const handleUp = () => {
+    const d = dragRef.current
+    if (d?.el) d.el.style.transform = ''
+    d?.els?.forEach((n) => n.classList.remove('is-drop-hit'))
+    /* release = SWAP (both zones): the ghost trades cells with the ringed
+       cell and NOTHING else moves; dropping on the vacated cell is a no-op */
+    if (d && d.hit !== undefined) {
+      const ids = d.zone === 'main' ? mainIds : railIds
+      const from = ids.indexOf(d.id)
+      const hit = d.hit
+      if (from !== -1 && hit >= 0 && hit < ids.length && hit !== from) {
+        const newZone = [...ids]
+        ;[newZone[from], newZone[hit]] = [newZone[hit], newZone[from]]
+        writeZoneOrder(newZone)
+      }
+    }
+    dragRef.current = null
+    setStageDrag(null)
+    setGhostPh(null)
   }
 
   /* push layout: the chrome takes its space OUT of the stage. Preview mode
@@ -453,6 +597,7 @@ export default function ViewportStage() {
     >
       <div
         className="ce-stage-main"
+        ref={stageMainRef}
         style={{
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
@@ -471,8 +616,15 @@ export default function ViewportStage() {
             </div>
           </div>
         )}
+        {/* dashed vacancy while a slot from THIS grid is the drag ghost */}
+        {ghostPh && stageDrag?.zone === 'main' && <div className="ce-drag-ph" style={ghostPh} aria-hidden="true" />}
         {mainIds.map((id, i) => (
-          <div key={id} className="ce-slot" data-shot-id={id} style={{ gridArea: slotArea(i) }}>
+          <div
+            key={id}
+            className={`ce-slot${id === activeId ? ' is-covered' : stageDrag?.zone === 'main' && stageDrag.id === id ? ' is-ghost' : ''}`}
+            data-shot-id={id}
+            style={{ gridArea: slotArea(i) }}
+          >
             {/* monitors share the editor's GES framing: the whole grid reads
                 as one family; only 主输出 keeps letterbox (the honest,
                 uncluttered picture of the finished frame) */}
@@ -485,13 +637,22 @@ export default function ViewportStage() {
             {!previewMode && id !== activeId && (
               <span
                 className={`ce-pane-chip${hasWaypoints(id) ? '' : ' is-empty'}`}
-                title={hasWaypoints(id) ? undefined : '该机位尚无航点 — 点击主视图绘制航线'}
+                title={hasWaypoints(id) ? t('stage.editThis') : t('stage.noWaypoints')}
               >
                 {nameOf(id)}
               </span>
             )}
             {!previewMode && (
-              <CollapseBtn onToggle={() => toggleMinimizedShot(id)} />
+              <>
+                <StageDragHandle
+                  title={t('stage.dragHandle')}
+                  onPointerDown={(e) => handleDown(e, 'main', id)}
+                  onPointerMove={handleMove}
+                  onPointerUp={handleUp}
+                  onPointerCancel={handleUp}
+                />
+                <CollapseBtn onToggle={() => toggleMinimizedShot(id)} />
+              </>
             )}
           </div>
         ))}
@@ -501,7 +662,11 @@ export default function ViewportStage() {
             (covering its pane) or in the rail (an appended editor slot).
             No active shot (edit target cleared) → no overlay, pure monitors. */}
         {activeId != null && (
-          <div className="ce-slot ce-slot-main" data-shot-id={activeId} style={{ gridArea: activeArea }}>
+          <div
+            className={`ce-slot ce-slot-main${stageDrag?.zone === 'main' && stageDrag.id === activeId ? ' is-ghost' : ''}`}
+            data-shot-id={activeId}
+            style={{ gridArea: activeArea }}
+          >
             <div className={`ce-frame${gesScope ? ' is-scope' : ''}`}>
               <GlobeViewport />
               {gesScope && <span className="ce-frame-mask" aria-hidden="true" />}
@@ -510,10 +675,26 @@ export default function ViewportStage() {
               <>
                 <span
                   className={`ce-pane-chip is-active${hasWaypoints(activeId) ? '' : ' is-empty'}`}
-                  title={hasWaypoints(activeId) ? undefined : '该机位尚无航点 — 点击主视图绘制航线'}
+                  title={hasWaypoints(activeId) ? t('stage.editActive') : t('stage.editActiveEmpty')}
                 >
                   {nameOf(activeId)}
                 </span>
+                {/* the overlay is glued to the ACTIVE shot's pane, so while
+                    that shot lives in the grid its handle lives HERE (the
+                    overlay covers the pane's own). Dragging it reorders the
+                    underlying pane — same zone, same id, zero new logic.
+                    The appended editor slot (active shot collapsed to the
+                    rail) stays handle-less: it is not a grid member; reorder
+                    it on the rail instead. */}
+                {activeInMain && (
+                  <StageDragHandle
+                    title={t('stage.dragHandle')}
+                    onPointerDown={(e) => handleDown(e, 'main', activeId)}
+                    onPointerMove={handleMove}
+                    onPointerUp={handleUp}
+                    onPointerCancel={handleUp}
+                  />
+                )}
                 <CollapseBtn onToggle={() => toggleMinimizedShot(activeId)} />
               </>
             )}
@@ -522,18 +703,28 @@ export default function ViewportStage() {
       </div>
 
       {!previewMode && railIds.length > 0 && (
-        <aside className="ce-stage-rail" onClickCapture={stageClick}>
+        <aside className="ce-stage-rail" ref={railRef}>
+          {ghostPh && stageDrag?.zone === 'rail' && <div className="ce-drag-ph" style={ghostPh} aria-hidden="true" />}
           {railIds.map((id) => (
             <div
               key={id}
-              className={`ce-thumb${id === activeId ? ' is-active' : ''}`}
-              data-shot-id={id}
-              title="单击 = 编辑该机位"
+              className={`ce-thumb${id === activeId ? ' is-active' : ''}${stageDrag?.zone === 'rail' && stageDrag.id === id ? ' is-ghost' : ''}`}
+              title={id === activeId ? t('stage.thumbHintActive') : t('stage.thumbHint')}
             >
               <ShotPane shotId={id} variant="thumb" />
-              <span className={`ce-thumb-name${hasWaypoints(id) ? '' : ' is-empty'}`}>
+              <span
+                className={`ce-thumb-name${hasWaypoints(id) ? '' : ' is-empty'}`}
+                title={hasWaypoints(id) ? undefined : t('stage.noWaypoints')}
+              >
                 {nameOf(id)}
               </span>
+              <StageDragHandle
+                title={t('stage.dragHandle')}
+                onPointerDown={(e) => handleDown(e, 'rail', id)}
+                onPointerMove={handleMove}
+                onPointerUp={handleUp}
+                onPointerCancel={handleUp}
+              />
               <ExpandBtn onToggle={() => toggleMinimizedShot(id)} />
             </div>
           ))}
@@ -548,6 +739,7 @@ export default function ViewportStage() {
  *  Its own component so the per-frame playhead subscription re-renders THIS
  *  cell, not the whole stage. */
 function ProgramSlot() {
+  const t = useT()
   const program = useRoute((s) => s.program)
   const progress = useRoute((s) => s.progress)
   const shots = useRoute((s) => s.shots)
@@ -562,16 +754,50 @@ function ProgramSlot() {
         <ShotPane variant="program" followProgram />
       ) : (
         <div className="ce-program-empty">
-          <span>主输出未编排</span>
-          <span>把播放头放到某处，点击一个机位</span>
+          <span>{t('stage.programEmpty')}</span>
+          <span>{t('stage.programEmptyHint')}</span>
         </div>
       )}
       {!previewMode && (
-        <span className="ce-pane-chip is-program" title="成片画面 — 主输出轨当前在播的机位">
-          主输出{name ? ` · ${name}` : ''}
+        <span className="ce-pane-chip is-program" title={t('stage.programChip')}>
+          {t('stage.program')}{name ? ` · ${name}` : ''}
         </span>
       )}
     </>
+  )
+}
+
+/* ---- drag-reorder handle — sits LEFT of the ⤡/⤢ buttons. Pointer-capture
+   drag reorders within its zone (grid or rail, never across); a plain click
+   does nothing (the container's delegated activation skips it as well). */
+function StageDragHandle(props: {
+  title: string
+  onPointerDown: (e: ReactPointerEvent) => void
+  onPointerMove: (e: ReactPointerEvent) => void
+  onPointerUp: (e: ReactPointerEvent) => void
+  onPointerCancel: (e: ReactPointerEvent) => void
+}) {
+  return (
+    <button
+      type="button"
+      className="ce-drag-handle"
+      title={props.title}
+      aria-label={props.title}
+      onPointerDown={props.onPointerDown}
+      onPointerMove={props.onPointerMove}
+      onPointerUp={props.onPointerUp}
+      onPointerCancel={props.onPointerCancel}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor" aria-hidden="true">
+        <circle cx="2.5" cy="2" r="1.3" />
+        <circle cx="7.5" cy="2" r="1.3" />
+        <circle cx="2.5" cy="6" r="1.3" />
+        <circle cx="7.5" cy="6" r="1.3" />
+        <circle cx="2.5" cy="10" r="1.3" />
+        <circle cx="7.5" cy="10" r="1.3" />
+      </svg>
+    </button>
   )
 }
 
@@ -579,12 +805,13 @@ function ProgramSlot() {
 
 /** collapse a main-grid slot (or the editor slot) down to the rail */
 function CollapseBtn({ onToggle }: { onToggle: () => void }) {
+  const t = useT()
   return (
     <button
       type="button"
       className="ce-slot-min"
-      title="收起到缩略条"
-      aria-label="收起该机位"
+      title={t('stage.collapse')}
+      aria-label={t('stage.collapseAria')}
       onClick={onToggle}
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
@@ -596,12 +823,13 @@ function CollapseBtn({ onToggle }: { onToggle: () => void }) {
 
 /** expand a rail thumb back into the main grid */
 function ExpandBtn({ onToggle }: { onToggle: () => void }) {
+  const t = useT()
   return (
     <button
       type="button"
       className="ce-thumb-max"
-      title="展开到主视图"
-      aria-label="展开该机位"
+      title={t('stage.expand')}
+      aria-label={t('stage.expandAria')}
       onClick={onToggle}
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">

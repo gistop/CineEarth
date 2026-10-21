@@ -21,6 +21,12 @@
 import { useState } from 'react'
 import { useRoute, type Shot } from '../features/route/routeStore'
 import { timelineDuration } from '../features/route/pathMath'
+import { useT } from '../i18n'
+
+/** dragover cannot read the payload (HTML5 DnD only unlocks getData on drop),
+ *  so the source row publishes itself here — mainly to keep its OWN drop hint
+ *  from lighting up while dragging over itself */
+let draggingShotId: string | null = null
 
 type ShotTrackProps = {
   shot: Shot
@@ -38,9 +44,14 @@ type ShotTrackProps = {
 }
 
 export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpand, onActivate }: ShotTrackProps) {
+  const t = useT()
   const removeShot = useRoute((s) => s.removeShot)
   const renameShot = useRoute((s) => s.renameShot)
   const deletable = useRoute((s) => s.shots.length > 1)
+  const shotsAll = useRoute((s) => s.shots)
+  const reorderShots = useRoute((s) => s.reorderShots)
+  /* which edge of THIS row the reorder drag would land on (drop preview) */
+  const [dropEdge, setDropEdge] = useState<'top' | 'bottom' | null>(null)
 
   /* inline rename — dblclick the name, Enter/blur commits, Esc cancels */
   const [editing, setEditing] = useState(false)
@@ -52,10 +63,12 @@ export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpa
 
   return (
     <div
-      className={`ce-shot${active ? ' is-active' : ''}`}
+      className={`ce-shot${active ? ' is-active' : ''}${
+        dropEdge === 'top' ? ' is-drop-top' : dropEdge === 'bottom' ? ' is-drop-bottom' : ''
+      }`}
       role="button"
       tabIndex={0}
-      title={`时长 ${dur.toFixed(1)}s · 双击名字重命名 · 点击切换编辑该机位（三角 = 展开或收起详细轨道）· 拖到主输出轨道 = 在落点添加该机位的镜头段`}
+      title={t('shot.headerTitle', { dur: dur.toFixed(1) })}
       onClick={onActivate}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onActivate()
@@ -68,13 +81,75 @@ export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpa
         e.dataTransfer.setData('application/x-ce-shot', shot.id)
         e.dataTransfer.effectAllowed = 'copy'
       }}
+      /* header-reorder drop target — the OTHER payload type (x-ce-shot keeps
+         its create-segment meaning on the 主输出 lane); the preview edge is
+         recomputed on drop itself, dragover merely shows it */
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('application/x-ce-shot-order')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (draggingShotId === shot.id) {
+          setDropEdge(null)
+          return
+        }
+        const r = e.currentTarget.getBoundingClientRect()
+        setDropEdge(e.clientY < r.top + r.height / 2 ? 'top' : 'bottom')
+      }}
+      onDragLeave={(e) => {
+        if (
+          e.dataTransfer.types.includes('application/x-ce-shot-order') &&
+          !e.currentTarget.contains(e.relatedTarget as Node)
+        )
+          setDropEdge(null)
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes('application/x-ce-shot-order')) return
+        e.preventDefault()
+        const srcId = e.dataTransfer.getData('application/x-ce-shot-order') || draggingShotId
+        setDropEdge(null)
+        draggingShotId = null
+        if (!srcId || srcId === shot.id) return
+        const from = shotsAll.findIndex((sh) => sh.id === srcId)
+        if (from === -1) return
+        const r = e.currentTarget.getBoundingClientRect()
+        let to = shotsAll.findIndex((sh) => sh.id === shot.id) + (e.clientY >= r.top + r.height / 2 ? 1 : 0)
+        if (from < to) to -= 1
+        if (to !== from) reorderShots(srcId, to)
+      }}
     >
       <div className="ce-shot-side">
+        {/* ⠿ reorder handle — the row's OWN drag keeps its meaning (onto the
+            主输出 lane = create segment); the handle stops that dragstart and
+            starts the reorder one instead: one drag, one meaning */}
+        <span
+          className="ce-shot-grab"
+          title={t('shot.grab')}
+          draggable={!editing}
+          onDragStart={(e) => {
+            e.stopPropagation()
+            draggingShotId = shot.id
+            e.dataTransfer.setData('application/x-ce-shot-order', shot.id)
+            e.dataTransfer.effectAllowed = 'move'
+          }}
+          onDragEnd={() => {
+            draggingShotId = null
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor" aria-hidden="true">
+            <circle cx="2" cy="2" r="1.25" />
+            <circle cx="6" cy="2" r="1.25" />
+            <circle cx="2" cy="6" r="1.25" />
+            <circle cx="6" cy="6" r="1.25" />
+            <circle cx="2" cy="10" r="1.25" />
+            <circle cx="6" cy="10" r="1.25" />
+          </svg>
+        </span>
         <button
           type="button"
           className={`ce-shot-caret${expanded ? ' is-open' : ''}`}
-          title={expanded ? '收起详细轨道' : '展开详细轨道'}
-          aria-label={`${expanded ? '收起' : '展开'} ${shot.name} 的详细轨道`}
+          title={expanded ? t('shot.fold') : t('shot.unfold')}
+          aria-label={expanded ? t('shot.ariaFold', { name: shot.name }) : t('shot.ariaUnfold', { name: shot.name })}
           aria-expanded={expanded}
           onClick={(e) => {
             e.stopPropagation()
@@ -118,8 +193,8 @@ export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpa
           <button
             type="button"
             className="ce-shot-del"
-            title="删除机位"
-            aria-label={`删除 ${shot.name}`}
+            title={t('shot.del')}
+            aria-label={t('shot.delAria', { name: shot.name })}
             onClick={(e) => {
               e.stopPropagation()
               removeShot(shot.id)
@@ -140,12 +215,13 @@ export default function ShotTrack({ shot, active, expanded, maxDur, onToggleExpa
  *  Controlled: the parent force-expands the new shot (leaving the collapsed
  *  storyboard view would look like "nothing happened"). */
 export function ShotAddRow({ onAdd }: { onAdd: () => void }) {
+  const t = useT()
   return (
     <div
       className="ce-shot ce-shot-add"
       role="button"
       tabIndex={0}
-      title="新建机位"
+      title={t('shot.add')}
       onClick={onAdd}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onAdd()
@@ -153,7 +229,7 @@ export function ShotAddRow({ onAdd }: { onAdd: () => void }) {
     >
       <div className="ce-shot-side">
         <span className="ce-shot-caret" aria-hidden="true">＋</span>
-        <span className="ce-shot-name">新建机位</span>
+        <span className="ce-shot-name">{t('shot.add')}</span>
       </div>
       <div className="ce-shot-lane" />
     </div>

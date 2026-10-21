@@ -5,6 +5,7 @@
 // Engine-agnostic: takes a canvas + callbacks, knows nothing of Cesium.
 
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer'
+import { t } from '../../i18n'
 
 export type RecordPath = {
   /** place camera at the starting pose */
@@ -92,7 +93,7 @@ async function resolveAvcAttempt(
     if (support?.supported) return { label: hardware ? 'hardware' : 'software', config }
   }
   if (hardware) return resolveAvcAttempt(w, h, bitrate, fps, false)
-  throw new Error('当前浏览器不支持 H.264 编码（需要 Chrome/Edge 的 WebCodecs）')
+  throw new Error(t('export.h264'))
 }
 
 async function waitForDequeue(encoder: VideoEncoder): Promise<void> {
@@ -112,14 +113,14 @@ export async function recordVideo(options: RecordOptions): Promise<Blob> {
   const { canvas, path, waitTilesLoaded, renderFrame, onWarmup, onProgress, isCancelled } = options
 
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
-    throw new Error('当前浏览器不支持 WebCodecs，无法录制视频')
+    throw new Error(t('export.webcodecs'))
   }
 
   // H.264 needs even dimensions
   const out = options.outputSize
   const width = Math.floor((out?.width ?? canvas.width) / 2) * 2
   const height = Math.floor((out?.height ?? canvas.height) / 2) * 2
-  if (width < 2 || height < 2) throw new Error('画布尺寸无效，无法录制')
+  if (width < 2 || height < 2) throw new Error(t('export.badCanvas'))
 
   /* rescale stage — created only when the canvas isn't already the encode
      size (push layout usually lands exactly on it via the 尺寸 setting) */
@@ -130,7 +131,7 @@ export async function recordVideo(options: RecordOptions): Promise<Blob> {
     frameSource.width = width
     frameSource.height = height
     fx = frameSource.getContext('2d')
-    if (!fx) throw new Error('无法创建缩放画布，无法录制')
+    if (!fx) throw new Error(t('export.badScale'))
     fx.fillStyle = '#000'
   }
 

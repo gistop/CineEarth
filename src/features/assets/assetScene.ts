@@ -48,10 +48,23 @@ interface LoadedModel {
 }
 
 const loaded = new Map<string, LoadedModel>()
-/** KML overlays, Excel point sheets & shapefile vectors live as data sources */
-const loadedSources = new Map<string, DataSource>()
-/** drawn lines: their single polyline entity (inside the data source above) */
-const loadedLineEntities = new Map<string, Entity>()
+
+/** per-viewer DataSource instances of one asset. Cesium's DataSourceDisplay
+ *  writes `ds._visualizers` / `ds._primitives` ONTO the data-source instance
+ *  (a single slot per instance): mounting ONE shared DS on several Viewers
+ *  made every later mount silently steal the asset from every earlier one —
+ *  the editor globe (first to register) drew nothing once a pane joined.
+ *  One fresh instance per viewer, rebuilt from the asset's source data. */
+interface DsMount {
+  promise: Promise<DataSource | null>
+  ds: DataSource | null
+}
+interface DsAsset {
+  /** build a FRESH data source bound to ONE viewer (never share instances) */
+  build: (v: Viewer) => Promise<DataSource> | DataSource
+  mounts: Map<Viewer, DsMount>
+}
+const dsAssets = new Map<string, DsAsset>()
 
 export function assetKindOf(file: File): AssetKind | null {
   const m = SUPPORTED_EXT.exec(file.name)
@@ -95,42 +108,165 @@ function pickScreenCenterGround(viewer: Viewer): Cartesian3 {
  *  is shared, so N views cost ONE evaluation per progress, not N. */
 const assetViewers = new Set<Viewer>()
 
-/** every registered viewer, or just the editor globe before any pane mounted */
+/** Every registered viewer, including the editor globe.  The editor is
+ * registered by GlobeViewport and panes join the set later; using only the
+ * pane set once it became non-empty used to silently omit the editor from
+ * newly-created assets.  That was visible after adding a second shot: the
+ * line remained in one monitor until the editor was activated again. */
 function assetViewerList(): Viewer[] {
-  if (assetViewers.size > 0) return [...assetViewers]
   const main = getViewer()
-  return main ? [main] : []
+  const out: Viewer[] = []
+  if (main && !main.isDestroyed()) out.push(main)
+  for (const v of assetViewers) {
+    if (!v.isDestroyed() && !out.includes(v)) out.push(v)
+  }
+  return out
 }
 
-const pendingSourceAdds = new WeakMap<Viewer, Map<DataSource, Promise<DataSource>>>()
+/** build + add ONE viewer's instance of an asset. Remount-safe: a teardown
+ *  or rebuild that lands while the async build is in flight finds the slot
+ *  already re-keyed and cleans the stray instance up itself. */
+function mountDsAsset(id: string, v: Viewer): Promise<DataSource | null> {
+  const entry = dsAssets.get(id)
+  if (!entry || !v || v.isDestroyed()) return Promise.resolve(null)
+  const existing = entry.mounts.get(v)
+  if (existing) return existing.promise
 
-function addSourceToViewer(v: Viewer, ds: DataSource): Promise<void> {
-  try {
-    if (v.dataSources.contains(ds)) return Promise.resolve()
-    let pending = pendingSourceAdds.get(v)
-    if (!pending) {
-      pending = new Map()
-      pendingSourceAdds.set(v, pending)
-    }
-    const existing = pending.get(ds)
-    if (existing) return existing.then(() => undefined)
-
-    const add = v.dataSources.add(ds)
-    pending.set(ds, add)
-    return add.then(() => undefined).finally(() => {
-      if (pending?.get(ds) === add) pending.delete(ds)
+  const mount: DsMount = { promise: Promise.resolve(null), ds: null }
+  entry.mounts.set(v, mount)
+  mount.promise = Promise.resolve()
+    .then(() => entry.build(v))
+    .then((ds) => {
+      /* the pane can be torn down between mount start and this microtask —
+         a destroyed Viewer's dataSources is gone; destroy the stray ds */
+      if (!v || v.isDestroyed() || !v.dataSources) {
+        ;(ds as unknown as { destroy?: () => void }).destroy?.()
+        return null
+      }
+      return v.dataSources.add(ds).then(() => ds)
     })
-  } catch (err) {
-    console.error('[CineEarth] asset mount failed', err)
-    return Promise.resolve()
-  }
+    .then((ds) => {
+      if (!ds) return null /* viewer died mid-build — already cleaned upstream */
+      if (v.isDestroyed() || entry.mounts.get(v) !== mount) {
+        /* this viewer unmounted (or a remount superseded us) mid-build —
+           leave nothing behind in the collection */
+        try {
+          if (!v.isDestroyed() && v.dataSources.contains(ds)) v.dataSources.remove(ds, true)
+          else (ds as unknown as { destroy?: () => void }).destroy?.()
+        } catch { /* racing teardown */ }
+        return null
+      }
+      mount.ds = ds
+      ds.show = useAssets.getState().assets.find((a) => a.id === id)?.visible !== false
+      /* idempotent follow-up for volume lines: if the terrain sample beat
+         this mount, the async apply already missed it — re-apply now that
+         the entity exists (cache-hit just re-writes the same positions) */
+      const fresh = useAssets.getState().assets.find((a) => a.id === id)
+      if (fresh?.line && fresh.line.style.section !== 'none') refreshVolumePath(id)
+      {
+        const e0 = ds.entities.values[0] as Entity | undefined
+        console.info(
+          `[CineEarth][dbg] mounted ${id} entities=${ds.entities.values.length}` +
+            ` positions=${e0?.polylineVolume?.positions?.constructor?.name ?? e0?.polyline?.positions?.constructor?.name ?? '-'}` +
+            ` show=${ds.show}`,
+        )
+      }
+      if (!v.isDestroyed()) v.scene.requestRender()
+      return ds
+    })
+    .catch((err) => {
+      console.error('[CineEarth] asset mount failed', err)
+      if (entry.mounts.get(v) === mount) entry.mounts.delete(v)
+      return null
+    })
+  return mount.promise
 }
 
-/** mount a data source on every asset viewer (idempotent per viewer) */
-function addSourceToAll(ds: DataSource): void {
-  for (const v of assetViewerList()) {
-    void addSourceToViewer(v, ds)
+/** detach ONE viewer's instance; the per-viewer DS is destroyed with it */
+function unmountDsAsset(id: string, v: Viewer): void {
+  const entry = dsAssets.get(id)
+  if (!entry) return
+  const mount = entry.mounts.get(v)
+  entry.mounts.delete(v)
+  if (!mount) return
+  void mount.promise.then((ds) => {
+    if (!ds) return
+    try {
+      if (!v.isDestroyed() && v.dataSources.contains(ds)) v.dataSources.remove(ds, true)
+      else (ds as unknown as { destroy?: () => void }).destroy?.()
+    } catch { /* racing teardown */ }
+  })
+}
+
+/** rebuild a line on EVERY viewer from the current store state (style /
+ *  animation toggles swap Constant ↔ Callback positions, and Cesium will
+ *  not re-route those from a property change alone) */
+function remountLineEverywhere(id: string): void {
+  const entry = dsAssets.get(id)
+  if (!entry) return
+  console.info(`[CineEarth][dbg] remount ${id} viewers=${entry.mounts.size} animated=${Boolean(useAnim.getState().tracks[id])}`)
+  for (const v of [...entry.mounts.keys()]) {
+    unmountDsAsset(id, v)
+    void mountDsAsset(id, v)
   }
+  /* full state snapshot 1.2s later — one click, complete picture */
+  window.setTimeout(() => {
+    try {
+      const asset = useAssets.getState().assets.find((a) => a.id === id)
+      const track = useAnim.getState().tracks[id]
+      const progress = useRoute.getState().progress
+      const growth = track ? evalAnim(track, 'growth', progress) : null
+      const parts: string[] = [
+        `snapshot ${id} progress=${progress.toFixed(3)} growth=${growth ?? '-'} track=${Boolean(track)}`,
+        `section=${asset?.line?.style.section ?? '-'} clamped=${asset?.line?.style.clamped ?? '-'}`,
+      ]
+      for (const [v, m] of entry.mounts) {
+        const ds = m.ds
+        const e0 = ds?.entities.values[0] as Entity | undefined
+        const vis = (ds as unknown as { _visualizers?: unknown[] })?._visualizers?.length
+        /* primitive census: DynamicGeometryUpdater rebuilds the animated
+           volume's fill/outline Primitives every frame — if they are being
+           produced we should see Primitive entries with ready=true here.
+           prims=0 ready=0 → the dynamic updater never produced geometry
+           (registration issue); ready primitives that still don't draw →
+           render-layer issue (appearance/depth/cull). */
+        let primCount = 0
+        let primReady = 0
+        const primMix = new Map<string, number>()
+        if (!v.isDestroyed()) {
+          const prims = v.scene.primitives
+          for (let i = 0; i < prims.length; i++) {
+            const p = prims.get(i) as { ready?: boolean; show?: boolean; constructor?: { name?: string } }
+            primCount++
+            if (p.ready) primReady++
+            const ctor = p.constructor?.name ?? '?'
+            primMix.set(ctor, (primMix.get(ctor) ?? 0) + 1)
+          }
+        }
+        const mix = [...primMix.entries()].map(([k, c]) => `${k}x${c}`).join(',')
+        parts.push(
+          `v=${v.isDestroyed() ? 'dead' : 'live'} dsInCollection=${ds ? v.dataSources.contains(ds) : '-'}`
+          + ` ents=${ds?.entities.values.length ?? 0}`
+          + ` pos=${e0?.polylineVolume?.positions?.constructor?.name ?? e0?.polyline?.positions?.constructor?.name ?? '-'}`
+          + ` dsShow=${ds?.show} entShow=${e0?.show ?? '-'} isShowing=${e0?.isShowing ?? '-'} vis=${vis ?? '-'}`
+          + ` prims=${primCount} ready=${primReady} mix=${mix}`,
+        )
+      }
+      console.info(`[CineEarth][dbg] ${parts.join(' | ')}`)
+    } catch (err) {
+      console.error('[CineEarth][dbg] snapshot failed', err)
+    }
+  }, 1200)
+}
+
+/** a line asset's entity as seen by each mounted viewer (one per view) */
+function lineEntities(id: string): Entity[] {
+  const out: Entity[] = []
+  dsAssets.get(id)?.mounts.forEach((m) => {
+    const e = m.ds?.entities.values[0]
+    if (e) out.push(e)
+  })
+  return out
 }
 
 /** mount a GLB model primitive on every asset viewer (idempotent) */
@@ -158,7 +294,7 @@ export function registerAssetViewer(v: Viewer): void {
  * the first render can run before Cesium creates the data-source visualizers. */
 export async function prepareAssetViewer(v: Viewer): Promise<void> {
   assetViewers.add(v)
-  await Promise.all([...loadedSources.values()].map((ds) => addSourceToViewer(v, ds)))
+  await Promise.all([...dsAssets.keys()].map((id) => mountDsAsset(id, v)))
   for (const entry of loaded.values()) {
     try {
       if (!v.scene.primitives.contains(entry.model)) v.scene.primitives.add(entry.model)
@@ -167,17 +303,54 @@ export async function prepareAssetViewer(v: Viewer): Promise<void> {
   if (!v.isDestroyed()) v.scene.requestRender()
 }
 
+/** RECORD-QUIET: while the exporter records ONE Viewer, every OTHER live
+ *  view keeps auto-following the playhead and re-rendering — and each of
+ *  those views streams imagery/terrain tiles for its OWN (different) camera
+ *  region at its own LOD. With ≥2 机位 that competition stretches the tile
+ *  load waves so much that the recorder's "tiles settled" poll can fall in
+ *  a gap BETWEEN waves and bake a half-refined (patchwork) frame into the
+ *  video. Muting: raise their SSE past any refinement trigger and stop
+ *  sibling/ancestor preloading — they keep showing whatever is already
+ *  cached, request nothing new, and the recorded Viewer gets the whole pipe.
+ *  Restore on teardown; the recording Viewer itself is exempt. */
+export function withQuietAssetViewers(active: Viewer): () => void {
+  const backups: Array<{
+    v: Viewer
+    sse: number
+    siblings: boolean
+    ancestors: boolean
+  }> = []
+  for (const v of assetViewerList()) {
+    if (v === active || v.isDestroyed()) continue
+    const globe = v.scene.globe
+    backups.push({
+      v,
+      sse: globe.maximumScreenSpaceError,
+      siblings: globe.preloadSiblings,
+      ancestors: globe.preloadAncestors,
+    })
+    globe.maximumScreenSpaceError = 32
+    globe.preloadSiblings = false
+    globe.preloadAncestors = false
+  }
+  return () => {
+    for (const b of backups) {
+      if (b.v.isDestroyed()) continue
+      b.v.scene.globe.maximumScreenSpaceError = b.sse
+      b.v.scene.globe.preloadSiblings = b.siblings
+      b.v.scene.globe.preloadAncestors = b.ancestors
+      b.v.scene.requestRender()
+    }
+  }
+}
+
 /** a live Viewer left — detach every asset BEFORE v.destroy(): destroying a
  *  Viewer DESTROYS the data sources it still holds, which would take the
  *  shared assets down for every other view */
 export function unregisterAssetViewer(v: Viewer): void {
   assetViewers.delete(v)
+  for (const id of [...dsAssets.keys()]) unmountDsAsset(id, v)
   if (v.isDestroyed()) return
-  for (const ds of loadedSources.values()) {
-    try {
-      if (v.dataSources.contains(ds)) v.dataSources.remove(ds, false)
-    } catch { /* racing teardown */ }
-  }
   for (const entry of loaded.values()) {
     try {
       if (v.scene.primitives.contains(entry.model)) {
@@ -249,16 +422,26 @@ async function importKmlOverlay(viewer: Viewer, id: string, url: string): Promis
     // clampToGround: true is Cesium's official switch — KML features whose
     // altitudeMode is clampToGround (the KML default) then drape on the
     // terrain instead of being drawn at their literal ellipsoid heights
-    const ds = await KmlDataSource.load(url, {
-      camera: viewer.camera,
-      canvas: viewer.canvas,
-      clampToGround: true,
+    // camera/canvas let network-linked KMLs refresh against the live view;
+    // clampToGround: true is Cesium's official switch — KML features whose
+    // altitudeMode is clampToGround (the KML default) then drape on the
+    // terrain instead of being drawn at their literal ellipsoid heights.
+    // A FRESH load per viewer (a DataSource instance serves ONE Viewer —
+    // see DsAsset); the blob URL stays alive for later viewers to re-read.
+    dsAssets.set(id, {
+      build: (v) =>
+        KmlDataSource.load(url, {
+          camera: v.camera,
+          canvas: v.canvas,
+          clampToGround: true,
+        }),
+      mounts: new Map(),
     })
-    addSourceToAll(ds)
-    loadedSources.set(id, ds)
+    const first = await mountDsAsset(id, viewer)
+    if (!first) throw new Error('KML/KMZ parse failed (see console)')
     useAssets.getState().setAssetStatus(id, 'ready')
     // overlays can be anywhere on Earth — bring them into frame
-    void viewer.flyTo(ds, { duration: 1.5 }).catch(() => {})
+    void viewer.flyTo(first, { duration: 1.5 }).catch(() => {})
   } catch (err) {
     console.error('[CineEarth] KML load failed:', err)
     URL.revokeObjectURL(url)
@@ -282,13 +465,19 @@ async function importShapefileZip(viewer: Viewer, id: string, url: string, file:
       throw new Error('no features found — zip must contain .shp + .dbf')
     }
 
-    const ds = await GeoJsonDataSource.load({ type: 'FeatureCollection', features } as object, {
-      clampToGround: true,
+    // a FRESH GeoJson load per viewer from the parsed features (DS instances
+    // are single-slot — see DsAsset); load() only reads the feature data
+    dsAssets.set(id, {
+      build: () =>
+        GeoJsonDataSource.load({ type: 'FeatureCollection', features } as object, {
+          clampToGround: true,
+        }),
+      mounts: new Map(),
     })
-    addSourceToAll(ds)
-    loadedSources.set(id, ds)
+    const first = await mountDsAsset(id, viewer)
+    if (!first) throw new Error('shapefile load failed')
     useAssets.getState().setAssetStatus(id, 'ready')
-    void viewer.flyTo(ds, { duration: 1.5 }).catch(() => {})
+    void viewer.flyTo(first, { duration: 1.5 }).catch(() => {})
   } catch (err) {
     console.error('[CineEarth] shapefile load failed:', err)
     URL.revokeObjectURL(url)
@@ -323,47 +512,52 @@ async function importXlsxPoints(
     }
     const nameCol = cols.find((c) => NAME_COL.test(String(c).trim()))
 
-    const ds = new CustomDataSource(file.name)
-    let count = 0
-    for (const row of rows) {
-      const lon = Number(row[lonCol])
-      const lat = Number(row[latCol])
-      if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
-      if (lon < -180 || lon > 180 || lat < -90 || lat > 90) continue
-      const label = nameCol ? String(row[nameCol] ?? '').trim() : ''
-      count += 1
-      ds.entities.add({
-        name: label || undefined,
-        position: Cartesian3.fromDegrees(lon, lat),
-        point: {
-          pixelSize: 7,
-          color: Color.YELLOW.withAlpha(0.95),
-          outlineColor: Color.BLACK.withAlpha(0.6),
-          outlineWidth: 1,
-          heightReference: HeightReference.CLAMP_TO_GROUND,
-        },
-        // labels only on small sheets — a 10k-row wall of text is pure noise
-        ...(label && rows.length <= 60
-          ? {
-              label: {
-                text: label,
-                font: '13px sans-serif',
-                fillColor: Color.WHITE,
-                pixelOffset: new Cartesian2(0, -14),
-                showBackground: true,
-                backgroundColor: Color.BLACK.withAlpha(0.55),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              },
-            }
-          : {}),
-      })
+    // a FRESH point cloud per viewer from the parsed rows (DS instances are
+    // single-slot — see DsAsset)
+    const build = () => {
+      const ds = new CustomDataSource(file.name)
+      for (const row of rows) {
+        const lon = Number(row[lonCol])
+        const lat = Number(row[latCol])
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
+        if (lon < -180 || lon > 180 || lat < -90 || lat > 90) continue
+        const label = nameCol ? String(row[nameCol] ?? '').trim() : ''
+        ds.entities.add({
+          name: label || undefined,
+          position: Cartesian3.fromDegrees(lon, lat),
+          point: {
+            pixelSize: 7,
+            color: Color.YELLOW.withAlpha(0.95),
+            outlineColor: Color.BLACK.withAlpha(0.6),
+            outlineWidth: 1,
+            heightReference: HeightReference.CLAMP_TO_GROUND,
+          },
+          // labels only on small sheets — a 10k-row wall of text is pure noise
+          ...(label && rows.length <= 60
+            ? {
+                label: {
+                  text: label,
+                  font: '13px sans-serif',
+                  fillColor: Color.WHITE,
+                  pixelOffset: new Cartesian2(0, -14),
+                  showBackground: true,
+                  backgroundColor: Color.BLACK.withAlpha(0.55),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+              }
+            : {}),
+        })
+      }
+      return ds
     }
-    if (count === 0) throw new Error('no rows with numeric lon/lat values')
-
-    addSourceToAll(ds)
-    loadedSources.set(id, ds)
+    dsAssets.set(id, { build, mounts: new Map() })
+    const first = await mountDsAsset(id, viewer)
+    if (!first || first.entities.values.length === 0) {
+      dsAssets.delete(id)
+      throw new Error('no rows with numeric lon/lat values')
+    }
     useAssets.getState().setAssetStatus(id, 'ready')
-    void viewer.flyTo(ds, { duration: 1.5 }).catch(() => {})
+    void viewer.flyTo(first, { duration: 1.5 }).catch(() => {})
   } catch (err) {
     console.error('[CineEarth] xlsx load failed:', err)
     URL.revokeObjectURL(url)
@@ -427,8 +621,9 @@ export function setAssetVisible(id: string, visible: boolean): void {
   useAssets.getState().setAssetVisible(id, visible)
   const entry = loaded.get(id)
   if (entry) entry.model.show = visible
-  const src = loadedSources.get(id)
-  if (src) src.show = visible
+  dsAssets.get(id)?.mounts.forEach((m) => {
+    if (m.ds) m.ds.show = visible
+  })
 }
 
 /** fly the camera to frame this asset (double-click in the asset list) */
@@ -461,8 +656,8 @@ export function zoomToAsset(id: string): void {
     return
   }
 
-  const src = loadedSources.get(id)
-  if (src) void viewer.flyTo(src, { duration: 1.5 }).catch(() => {})
+  const mount = dsAssets.get(id)?.mounts.get(viewer)
+  if (mount?.ds) void viewer.flyTo(mount.ds, { duration: 1.5 }).catch(() => {})
 }
 
 /* ---------- drawn ground lines (native assets, no file behind them) ------- */
@@ -482,6 +677,13 @@ function pathPositions(
   const flat: number[] = []
   for (const p of positions) flat.push(p.lon, p.lat, p.height + lift)
   return Cartesian3.fromDegreesArrayHeights(flat)
+}
+
+/** flat [lon,lat,h,...] path raised by `lift` metres */
+function liftedCartesians(flat: number[], lift: number): Cartesian3[] {
+  const withLift: number[] = []
+  for (let i = 0; i < flat.length; i += 3) withLift.push(flat[i], flat[i + 1], flat[i + 2] + lift)
+  return Cartesian3.fromDegreesArrayHeights(withLift)
 }
 
 /**
@@ -565,6 +767,16 @@ function buildFlatEntity(
   })
 }
 
+/** volume base elevation: sit ON the ground (half a cross-section above the
+ *  sampled surface) PLUS a floor margin — depthTestAgainstTerrain is on by
+ *  default and the on-screen terrain tile is usually a coarser LOD than the
+ *  most-detailed sample the path was built from, so a bare half-section
+ *  still ends up behind the rendered surface and gets swallowed whole */
+const VOLUME_LIFT_FLOOR = 2
+function volumeLiftOf(style: LineStyle, lift = style.lift): number {
+  return lift + style.sectionSize / 2 + VOLUME_LIFT_FLOOR
+}
+
 function buildVolumeEntity(
   ds: CustomDataSource,
   id: string,
@@ -576,13 +788,31 @@ function buildVolumeEntity(
     polylineVolume: {
       positions: animated
         ? new CallbackProperty(() => animatedVolumePositions(id), false)
-        : pathPositions(positions, style.lift),
+        : volumePositions(id, positions, volumeLiftOf(style)),
       shape: sectionShape(style),
       material: new ColorMaterialProperty(volumeColor(style)),
       outline: true,
       outlineColor: volumeOutlineColor(style),
     },
   })
+}
+
+/** positions for a FRESH volume build. The per-viewer remount pipeline is
+ *  async (build runs on a microtask), so the old "rebuild, then swap the
+ *  sampled terrain path in" order broke: refreshVolumePath's synchronous
+ *  cache-hit apply landed while the new mounts were still pending and was
+ *  silently dropped — the volume kept the RAW drawn vertices (a chord
+ *  through terrain) and read as "not clamped". Consume the cached sample at
+ *  build time instead; the miss path falls back to the drawn vertices until
+ *  the async sample lands (refreshVolumePath then swaps it in). */
+function volumePositions(
+  id: string,
+  positions: { lon: number; lat: number; height: number }[],
+  lift: number,
+): Cartesian3[] {
+  const cached = lineVolumePaths.get(id)
+  if (cached) return liftedCartesians(cached, lift)
+  return pathPositions(positions, lift)
 }
 
 /** last-applied volume geometry params — rebuild only when these change
@@ -691,19 +921,21 @@ async function groundPath(viewer: Viewer, flat: number[]): Promise<number[]> {
 
 /** hot-swap a volume's positions for the (cached) terrain-following path */
 function applyVolumePath(id: string, flat: number[], lift: number): void {
-  const vol = loadedLineEntities.get(id)?.polylineVolume
-  if (!vol) return
-  const withLift: number[] = []
-  for (let i = 0; i < flat.length; i += 3) withLift.push(flat[i], flat[i + 1], flat[i + 2] + lift)
-  vol.positions = new ConstantProperty(Cartesian3.fromDegreesArrayHeights(withLift))
+  const positions = new ConstantProperty(liftedCartesians(flat, lift))
+  for (const entity of lineEntities(id)) {
+    const vol = entity.polylineVolume
+    if (vol) vol.positions = positions
+  }
 }
 
 /* ---- per-frame animation callbacks ----------------------------------------
    Lines with an anim track get a dynamic CallbackProperty: every render
    frame it evaluates Growth% / Lift at the playhead (useRoute.progress —
    the same clock the camera obeys) and trims the path by ARC LENGTH so the
-   growth reads uniform. Signature-memoized: paused frames return the same
-   Cartesian3[] without rebuilding. */
+   growth reads uniform. Signature-memoized volume coordinates stay private:
+   Cesium's synchronous volume geometry builder projects its input Cartesian3
+   objects onto the ellipsoid IN PLACE. Each evaluation must return a deep
+   copy, or later frames/viewers reuse zero-height positions under terrain. */
 
 const lineVolumeCums = new Map<string, number[]>()
 const lineAnimCache = new Map<string, { sig: string; arr: Cartesian3[] }>()
@@ -760,6 +992,14 @@ function animatedFlatPositions(id: string): Cartesian3[] {
   const flat: number[] = []
   for (const p of line.positions) flat.push(p.lon, p.lat, p.height + lift)
   const cut = cutFlatPath(flat, cumulativeLengths(flat), growth)
+  const loggedGrowth = animPosLogged.get(id)
+  if (loggedGrowth === undefined || Math.abs(growth - loggedGrowth) >= 0.2) {
+    animPosLogged.set(id, growth)
+    console.info(
+      `[CineEarth][dbg] animpos-flat ${id} progress=${progress.toFixed(3)} growth=${growth.toFixed(3)}` +
+        ` clamped=${style.clamped} pts=${Math.floor(cut.length / 3)}`,
+    )
+  }
   if (style.clamped) {
     const pts: number[] = []
     for (let i = 0; i < cut.length; i += 3) pts.push(cut[i], cut[i + 1])
@@ -770,6 +1010,7 @@ function animatedFlatPositions(id: string): Cartesian3[] {
 
 /** animated volume: Growth% trims the cached terrain-following path, Lift
     offsets it (falling back to the static style value with no lift keys) */
+const animPosLogged = new Map<string, number>()
 function animatedVolumePositions(id: string): Cartesian3[] {
   const line = useAssets.getState().assets.find((a) => a.id === id)?.line
   if (!line) return []
@@ -784,17 +1025,25 @@ function animatedVolumePositions(id: string): Cartesian3[] {
   const growth = (evalAnim(track, 'growth', progress) ?? 100) / 100
   const lift = evalAnim(track, 'lift', progress) ?? line.style.lift
 
-  const sig = `${cached ? 'c' : 's'}|${growth.toFixed(4)}|${lift.toFixed(2)}`
+  const sig = `${cached ? 'c' : 's'}|${growth.toFixed(4)}|${lift.toFixed(2)}|${line.style.sectionSize}`
   const hit = lineAnimCache.get(id)
-  if (hit && hit.sig === sig) return hit.arr
+  if (hit && hit.sig === sig) return hit.arr.map((p) => Cartesian3.clone(p))
 
   const cut = cutFlatPath(flat, cum, growth)
   const arr = new Array<Cartesian3>(cut.length / 3)
   for (let i = 0, j = 0; i < cut.length; i += 3, j++) {
-    arr[j] = Cartesian3.fromDegrees(cut[i], cut[i + 1], cut[i + 2] + lift)
+    arr[j] = Cartesian3.fromDegrees(cut[i], cut[i + 1], cut[i + 2] + volumeLiftOf(line.style, lift))
+  }
+  const loggedGrowth = animPosLogged.get(id)
+  if (loggedGrowth === undefined || Math.abs(growth - loggedGrowth) >= 0.2) {
+    animPosLogged.set(id, growth)
+    console.info(
+      `[CineEarth][dbg] animpos ${id} progress=${progress.toFixed(3)} growth=${growth.toFixed(3)}` +
+        ` lift=${lift} pts=${arr.length} flatPts=${flat.length / 3} cached=${Boolean(cached)}`,
+    )
   }
   lineAnimCache.set(id, { sig, arr })
-  return arr
+  return arr.map((p) => Cartesian3.clone(p))
 }
 
 /** make the volume follow the terrain: spline → sample → smooth → swap in.
@@ -806,11 +1055,16 @@ function refreshVolumePath(id: string): void {
   const asset = useAssets.getState().assets.find((a) => a.id === id)
   if (!viewer || !asset?.line) return
 
-  const animated = Boolean(useAnim.getState().tracks[id])
   const apply = (flat: number[]) => {
-    if (animated) return
+    // Sampling can finish after Add to timeline: never overwrite the new
+    // dynamic callback with the static path captured when sampling began.
+    if (useAnim.getState().tracks[id]) return
     const fresh = useAssets.getState().assets.find((a) => a.id === id)
-    if (fresh?.line) applyVolumePath(id, flat, fresh.line.style.lift)
+    if (fresh?.line) {
+      /* sit the volume ON the ground: lift half a cross-section, otherwise
+         the tube centres at terrain height and buries its lower half */
+      applyVolumePath(id, flat, volumeLiftOf(fresh.line.style))
+    }
   }
 
   const cached = lineVolumePaths.get(id)
@@ -826,10 +1080,38 @@ function refreshVolumePath(id: string): void {
     if (lineVolumeJobs.get(id) !== job) return // superseded or removed meanwhile
     lineVolumePaths.set(id, flat)
     lineVolumeCums.set(id, cumulativeLengths(flat))
+    lineAnimCache.delete(id)
+    const hMin = Math.min(...flat.filter((_, i) => i % 3 === 2))
+    const hMax = Math.max(...flat.filter((_, i) => i % 3 === 2))
+    console.info(
+      `[CineEarth][dbg] volume path ${id} pts=${flat.length / 3} h=[${hMin.toFixed(1)}..${hMax.toFixed(1)}]` +
+        (hMin === 0 && hMax === 0 ? ' FLAT-ELLIPSOID?' : ''),
+    )
     const fresh = useAssets.getState().assets.find((a) => a.id === id)
     if (!fresh?.line) return
     apply(flat)
+    /* requestRenderMode: the async sample lands between frames — without a
+       nudge the viewport keeps showing the pre-sample chord line */
+    if (!viewer.isDestroyed()) viewer.scene.requestRender()
   })
+}
+
+/** fresh line entity set for ONE viewer from current store state (the store
+ *  is the single source of truth — style AND animation live there) */
+function buildLineSource(id: string): CustomDataSource {
+  const asset = useAssets.getState().assets.find((a) => a.id === id)
+  if (!asset?.line) return new CustomDataSource('line')
+  const { positions, style } = asset.line
+  const animated = Boolean(useAnim.getState().tracks[id])
+  const ds = new CustomDataSource(asset.name)
+  if (style.section !== 'none') {
+    buildVolumeEntity(ds, id, positions, style, animated)
+    lineVolumeKeys.set(id, volumeKeyOf(style))
+  } else {
+    buildFlatEntity(ds, id, positions, style, animated)
+    lineVolumeKeys.delete(id)
+  }
+  return ds
 }
 
 /** commit a finished drawing as a line asset + ground-clamped polyline */
@@ -842,14 +1124,9 @@ export async function createLineAsset(
   const n = useAssets.getState().assets.filter((a) => a.kind === 'line').length + 1
   const id = createAssetId()
   const name = `Line ${n}`
-  const style = { ...DEFAULT_LINE_STYLE }
 
-  const ds = new CustomDataSource(name)
-  const entity = buildFlatEntity(ds, id, positions, style, false)
-  addSourceToAll(ds)
-  loadedSources.set(id, ds)
-  loadedLineEntities.set(id, entity)
-
+  /* register in the store FIRST — buildLineSource reads it to build each
+     viewer's fresh instance (a DataSource serves ONE Viewer: DsAsset) */
   useAssets.getState().addAsset({
     id,
     name,
@@ -857,8 +1134,12 @@ export async function createLineAsset(
     url: '',
     visible: true,
     status: 'ready',
-    line: { positions, style },
+    line: { positions, style: { ...DEFAULT_LINE_STYLE } },
   })
+  dsAssets.set(id, { build: () => buildLineSource(id), mounts: new Map() })
+  /* resolve once every viewer has the new line mounted — the drawing layer
+     keeps its preview on screen until then, so the handover is seamless */
+  await Promise.all(assetViewerList().map((v) => mountDsAsset(id, v)))
   // no camera fly-to after finishing — keep the user's framing (asked for)
 }
 
@@ -868,41 +1149,47 @@ export function applyLineStyle(id: string): void {
   if (!asset?.line) return
   const style = asset.line.style
 
-  const ds = loadedSources.get(id)
-  let entity = loadedLineEntities.get(id)
-  if (!ds || !entity) return
+  const entities = lineEntities(id)
+  const entity = entities[0]
+  if (!entity) return
 
   const wantVolume = style.section !== 'none'
   const animated = Boolean(useAnim.getState().tracks[id])
 
-  /* ---- extruded mode: colour hot-swaps, geometry params rebuild ---- */
+  /* ---- extruded mode: colour & cross-section hot-swap onto the entity —
+     section/size/aspect edits used to remount (a slider drag = dozens of
+     destroy/rebuild cycles per viewer, and the racing remove/add starved
+     Cesium's per-DataSource visualizers: the final entity was in the
+     collection but never evaluated again — an animated volume vanished).
+     `shape` is a plain property: assigning a new ConstantProperty raises
+     definitionChanged and Cesium rebuilds the swept geometry by itself;
+     remount is reserved for flat↔volume and static↔animated switches. ---- */
   if (wantVolume) {
     if (entity.polylineVolume) {
-      const vol = entity.polylineVolume
-      vol.material = new ColorMaterialProperty(volumeColor(style))
-      vol.outlineColor = new ConstantProperty(volumeOutlineColor(style))
-      const sameGeom = lineVolumeKeys.get(id) === volumeKeyOf(style)
       const sameAnim = entity.polylineVolume.positions instanceof CallbackProperty === animated
-      if (sameGeom && sameAnim) {
-        // colour- or lift-only edit: re-offset the cached terrain path
+      if (sameAnim) {
+        const sameShape = lineVolumeKeys.get(id) === volumeKeyOf(style)
+        for (const e of entities) {
+          const vol = e.polylineVolume
+          if (!vol) continue
+          vol.material = new ColorMaterialProperty(volumeColor(style))
+          vol.outlineColor = new ConstantProperty(volumeOutlineColor(style))
+          if (!sameShape) vol.shape = new ConstantProperty(sectionShape(style))
+        }
+        if (!sameShape) lineVolumeKeys.set(id, volumeKeyOf(style))
+        // lift-only edit: re-offset the cached terrain path
         refreshVolumePath(id)
         return
       }
     }
-    ds.entities.remove(entity)
-    entity = buildVolumeEntity(ds, id, asset.line.positions, style, animated)
-    loadedLineEntities.set(id, entity)
-    lineVolumeKeys.set(id, volumeKeyOf(style))
+    remountLineEverywhere(id) // rebuilds & re-keys lineVolumeKeys per viewer
     refreshVolumePath(id)
     return
   }
 
   /* ---- flat mode ---- */
   if (entity.polylineVolume) {
-    ds.entities.remove(entity)
-    entity = buildFlatEntity(ds, id, asset.line.positions, style, animated)
-    loadedLineEntities.set(id, entity)
-    lineVolumeKeys.delete(id)
+    remountLineEverywhere(id)
     return
   }
 
@@ -911,21 +1198,21 @@ export function applyLineStyle(id: string): void {
   // Same for animation toggling: positions move between Constant & Callback.
   const isAnim = entity.polyline?.positions instanceof CallbackProperty
   if (Boolean(entity.polyline?.clampToGround?.getValue()) !== style.clamped || isAnim !== animated) {
-    ds.entities.remove(entity)
-    entity = buildFlatEntity(ds, id, asset.line.positions, style, animated)
-    loadedLineEntities.set(id, entity)
+    remountLineEverywhere(id)
     return
   }
 
-  const poly = entity.polyline
-  if (!poly) return
-  poly.width = new ConstantProperty(style.width)
-  poly.material = lineMaterial(style)
+  for (const e of entities) {
+    const poly = e.polyline
+    if (!poly) continue
+    poly.width = new ConstantProperty(style.width)
+    poly.material = lineMaterial(style)
+  }
 }
 
 export function removeAsset(id: string): void {
-  /* an asset leaves EVERY view; the shared instance is destroyed exactly
-     once, AFTER the last viewer has let go of it */
+  /* an asset leaves EVERY view; each viewer's own instance is destroyed with
+     it (per-viewer instances — no cross-viewer cleanup needed) */
   const entry = loaded.get(id)
   if (entry) {
     for (const v of assetViewerList()) {
@@ -939,19 +1226,11 @@ export function removeAsset(id: string): void {
   }
   loaded.delete(id)
 
-  const src = loadedSources.get(id)
+  const src = dsAssets.get(id)
   if (src) {
-    for (const v of assetViewerList()) {
-      try {
-        if (v.dataSources.contains(src)) v.dataSources.remove(src, false)
-      } catch { /* racing teardown */ }
-    }
-    /* the DataSource INTERFACE hides destroy (the concrete classes all have
-       it) — optional-call the runtime method */
-    try { (src as unknown as { destroy?: () => void }).destroy?.() } catch { /* already destroyed */ }
+    for (const v of [...src.mounts.keys()]) unmountDsAsset(id, v)
+    dsAssets.delete(id)
   }
-  loadedSources.delete(id)
-  loadedLineEntities.delete(id)
   lineVolumeKeys.delete(id)
   lineVolumePaths.delete(id)
   lineVolumeJobs.delete(id)

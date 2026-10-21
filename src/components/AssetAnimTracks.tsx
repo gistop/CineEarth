@@ -11,6 +11,7 @@ import {
 } from '../features/assets/assetAnimStore'
 import { applyLineStyle } from '../features/assets/assetScene'
 import { useRoute } from '../features/route/routeStore'
+import { useT, type I18nKey } from '../i18n'
 import { InsertKeyBtn, SoloLabel } from './TimelineWidgets'
 
 /**
@@ -47,9 +48,11 @@ type Props = {
 /** which asset channel owns the detail pane — { assetId, prop } or null */
 export type AnimSolo = { assetId: string; prop: AnimProp } | null
 
-const PROPS: { id: AnimProp; label: string; unit: string; max: number; step: number }[] = [
-  { id: 'growth', label: '生长', unit: '%', max: 100, step: 0.5 },
-  { id: 'lift', label: '离地', unit: 'm', max: LIFT_MAX, step: 2 },
+/* labels resolve through the dictionary at RENDER time (a plain string here
+   would freeze whatever locale was active at module load) */
+const PROPS: { id: AnimProp; labelKey: I18nKey; unit: string; max: number; step: number }[] = [
+  { id: 'growth', labelKey: 'aam.growth', unit: '%', max: 100, step: 0.5 },
+  { id: 'lift', labelKey: 'aam.lift', unit: 'm', max: LIFT_MAX, step: 2 },
 ]
 
 type Drag = {
@@ -67,6 +70,7 @@ type Drag = {
 }
 
 export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, onSoloChange }: Props) {
+  const t = useT()
   const tracks = useAnim((s) => s.tracks)
   const assets = useAssets((s) => s.assets)
   const selectedKeyId = useAnim((s) => s.selectedKeyId)
@@ -188,14 +192,14 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
             {/* header — mirrors a 机位 row: caret / name / frame count / × */}
             <div
               className="ce-shot ce-anim-shot"
-              title={`${asset.name} 资产动画 · 三角展开或收起通道 · × 移除动画（恢复静态样式）`}
+              title={t('aam.header', { name: asset.name })}
             >
               <div className="ce-shot-side">
                 <button
                   type="button"
                   className={`ce-shot-caret${open ? ' is-open' : ''}`}
-                  title={open ? '收起通道' : '展开通道'}
-                  aria-label={`${open ? '收起' : '展开'} ${asset.name} 的通道`}
+                  title={open ? t('aam.fold') : t('aam.unfold')}
+                  aria-label={open ? t('aam.ariaFold', { name: asset.name }) : t('aam.ariaUnfold', { name: asset.name })}
                   aria-expanded={open}
                   onClick={() => {
                     /* collapsing the group that owns the detail pane must
@@ -212,12 +216,12 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
                   ▸
                 </button>
                 <span className="ce-shot-name">{asset.name}</span>
-                <span className="ce-shot-dur">{track.growth.length + track.lift.length} 帧</span>
+                <span className="ce-shot-dur">{t('aam.frames', { n: track.growth.length + track.lift.length })}</span>
                 <button
                   type="button"
                   className="ce-shot-del"
-                  title="移除动画（恢复静态样式）"
-                  aria-label={`移除 ${asset.name} 的动画`}
+                  title={t('aam.remove')}
+                  aria-label={t('aam.removeAria', { name: asset.name })}
                   onClick={() => {
                     useAnim.getState().removeTrack(id)
                     if (solo?.assetId === id) onSoloChange(null)
@@ -228,7 +232,7 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
                 </button>
               </div>
               <div className="ce-shot-lane">
-                <span className="ce-anim-badge">资产动画</span>
+                <span className="ce-anim-badge">{t('aam.badge')}</span>
               </div>
             </div>
 
@@ -240,6 +244,7 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
                    internally when evaluating; the render must sort too. */
                 const keys = [...track[p.id]].sort((a, b) => a.t - b.t)
                 const isSolo = solo?.assetId === id && solo.prop === p.id
+                const label = t(p.labelKey)
                 const cur = evalAnim(track, p.id, progress)
                 const yPct = (v: number) => 100 - (v / p.max) * 100
                 return (
@@ -247,16 +252,16 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
                     <div className="ce-track-side">
                       <SoloLabel
                         id={p.id}
-                        label={p.label}
+                        label={label}
                         value={cur != null ? `${Math.round(cur)}${p.unit}` : undefined}
                         solo={isSolo ? p.id : null}
                         onToggle={() => onSoloChange(isSolo ? null : { assetId: id, prop: p.id })}
                       />
-                      <InsertKeyBtn label={p.label} onInsert={() => insertAtPlayhead(id, p.id)} />
+                      <InsertKeyBtn label={label} onInsert={() => insertAtPlayhead(id, p.id)} />
                     </div>
                     <div
                       className={`ce-track-lane${isSolo ? ' is-curve ce-anim-curve' : ' ce-reveal-lane'}`}
-                      title={`${p.label} · 双击：加关键帧 · 拖动关键帧：时间 / 值 · 双击关键帧：删除${isSolo ? ' · 点击左侧标签退出曲线编辑' : ' · 点击左侧标签进入曲线编辑'}`}
+                      title={isSolo ? t('aam.laneOpen', { label }) : t('aam.laneFold', { label })}
                       onDoubleClick={(e) => {
                         if ((e.target as HTMLElement).closest('.ce-key')) return
                         addKeyAtEvent(e, id, p.id)
@@ -292,7 +297,7 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
                               <span
                                 className={`ce-key is-curve-key${selectedKeyId === k.id ? ' is-selected' : ''}`}
                                 style={{ left: `${pct(k.t)}%`, top: `${yPct(k.value)}%` }}
-                                title={`${Math.round(k.value)}${p.unit} @ ${(k.t * duration).toFixed(1)}s · 拖动改时间与值 · 双击删除`}
+                                title={t('aam.keyTitle', { label: Math.round(k.value), unit: p.unit, t: (k.t * duration).toFixed(1) })}
                                 onPointerDown={(e) => onKeyPointerDown(e, id, p.id, k, true)}
                                 onPointerMove={onKeyPointerMove}
                                 onPointerUp={onKeyPointerUp}
@@ -327,7 +332,7 @@ export default function AssetAnimTracks({ duration, viewStart, viewSpan, solo, o
                               key={k.id}
                               className={`ce-key ce-reveal-key${selectedKeyId === k.id ? ' is-selected' : ''}`}
                               style={{ left: `${pct(k.t)}%` }}
-                              title={`${Math.round(k.value)}${p.unit} @ ${(k.t * duration).toFixed(1)}s · 拖动改时间与值 · 双击删除`}
+                              title={t('aam.keyTitle', { label: Math.round(k.value), unit: p.unit, t: (k.t * duration).toFixed(1) })}
                               onPointerDown={(e) => onKeyPointerDown(e, id, p.id, k, false)}
                               onPointerMove={onKeyPointerMove}
                               onPointerUp={onKeyPointerUp}

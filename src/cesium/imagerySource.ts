@@ -76,8 +76,15 @@ function awaitClear(viewer: Viewer, done: () => void): void {
   const finish = () => {
     if (settled) return
     settled = true
-    viewer.scene.globe.tileLoadProgressEvent.removeEventListener(onProgress)
     clearInterval(nudge)
+    /* the nudge fires finish precisely BECAUSE the viewer may be gone — a
+       destroyed Viewer's scene is already torn down, so unhook only when
+       still alive; the event dies with the viewer otherwise anyway */
+    if (!viewer.isDestroyed()) {
+      try {
+        viewer.scene.globe.tileLoadProgressEvent.removeEventListener(onProgress)
+      } catch { /* racing teardown */ }
+    }
     done()
   }
   const onProgress = (queued: number) => {

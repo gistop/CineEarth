@@ -22,10 +22,8 @@
 }
 
 .ce-credits {
-  /* FIXED, not absolute: GlobeViewport now lives inside a grid SLOT (position:
-     relative) — absolute would anchor the strip to that slot. Fixed pins it to
-     the app frame (== viewport, .ce-app is fixed inset 0) regardless of which
-     slot the main globe occupies. */
+  /* Mounted directly under .ce-app, outside the transformed drag slots.
+     Fixed pins attribution above the timeline even while the editor moves. */
   position: fixed;
   /* Same geometry class as Cesium's native credit bar (.cesium-viewer-bottom):
      an edge-anchored strip whose width comes ONLY from left+right. Content can
@@ -185,6 +183,13 @@
   z-index: 2;
 }
 
+/* The active shot keeps its preview Viewer mounted, but only its editor
+   overlay paints. Moving that overlay must expose an empty drag vacancy,
+   never the preview's last rendered canvas. Preserve the grid cell's size. */
+.ce-slot.is-covered {
+  visibility: hidden;
+}
+
 /* ShotPane's viewer host fills its cell */
 .ce-pane-view,
 .ce-pane-view .cesium-viewer,
@@ -196,7 +201,8 @@
   height: 100%;
 }
 
-/* pane name chip — non-interactive overlay */
+/* pane name chip — mouse-transparent overlay by default (globe drags that
+   start under the label must still reach the canvas) */
 .ce-pane-chip {
   position: absolute;
   top: 6px;
@@ -214,6 +220,15 @@
   line-height: 1.5;
   color: var(--ce-text-2);
   pointer-events: none;
+}
+/* a chip that carries a tooltip must be hoverable — but ONLY those: the
+   [title] selector targets exactly the tipped chips, bare ones stay
+   mouse-transparent. cursor: default keeps the canvas grab cursor from
+   leaking through and reads as "label", not "control". Clicks on tipped
+   chips still reach the delegated capture-phase stage click handler. */
+.ce-pane-chip[title] {
+  pointer-events: auto;
+  cursor: default;
 }
 /* the ACTIVE shot's chip (the overlay copy riding on the editor window):
    accent FILL marks the window you are editing — the monitor row reads at
@@ -477,8 +492,10 @@
 }
 
 /* right rail: vertical stack of thumb panes. THIS side may scroll (min-size
-   rule); the main area never does. Hidden entirely at ≤1 shot / preview. */
+   rule); the main area never does. Hidden entirely at ≤1 shot / preview.
+   Relative — the drag vacancy placeholder (.ce-thumb-ph) anchors to it. */
 .ce-stage-rail {
+  position: relative;
   flex: none;
   width: 208px;
   overflow-y: auto;
@@ -517,9 +534,12 @@
 /* ---- 大/小 hover buttons — the ONLY way a shot switches between the main
    grid and the rail. Quiet until hover, then fully legible. They sit ABOVE
    their slot/thumb and swallow their own click (the container's delegated
-   single-click activation skips them — collapsing must not re-activate). */
+   single-click activation skips them — collapsing must not re-activate).
+   The .ce-drag-handle shares this chrome — same shape, one slot to the LEFT
+   of the ⤡/⤢ button, pointer-capture drag reorders WITHIN its zone only. */
 .ce-slot-min,
-.ce-thumb-max {
+.ce-thumb-max,
+.ce-drag-handle {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -541,20 +561,78 @@
 }
 
 .ce-slot:hover .ce-slot-min,
-.ce-thumb:hover .ce-thumb-max {
+.ce-thumb:hover .ce-thumb-max,
+.ce-slot:hover .ce-drag-handle,
+.ce-thumb:hover .ce-drag-handle {
   opacity: 1;
 }
 
 .ce-slot-min:hover,
-.ce-thumb-max:hover {
+.ce-thumb-max:hover,
+.ce-drag-handle:hover {
   border-color: var(--ce-accent);
   color: var(--ce-text-1);
+}
+
+/* the drag handle sits LEFT of the ⤡/⤢ button (22px wide + 2px gutter);
+   while a drag is armed the grabbed slot dims — "in hand" feedback */
+.ce-drag-handle {
+  right: 30px;
+  cursor: grab;
+}
+.ce-drag-handle:active {
+  cursor: grabbing;
+}
+/* drag affordances (both zones): the grabbed view LIFTS as a ghost (inline
+   transform tracks the pointer — see handleMove) and the cell under the
+   pointer wears an accent ring answering "where will it land". will-change:
+   its own compositing layer, so the WebGL canvas translates without
+   re-rasterising (no shimmer/tearing mid-drag). */
+.ce-slot.is-ghost,
+.ce-thumb.is-ghost {
+  z-index: 20;
+  opacity: 0.95;
+  border-color: var(--ce-accent);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.5), 0 0 0 1px var(--ce-accent);
+  cursor: grabbing;
+  will-change: transform;
+}
+/* the ghost is the LIVE slot element — any attribution chrome inside would
+   ride along across the screen. Pane viewers paint none (detached credit
+   sink); this is the belt-and-braces guarantee for the drag's lifetime. */
+.ce-slot.is-ghost .cesium-viewer-bottom,
+.ce-thumb.is-ghost .cesium-viewer-bottom {
+  visibility: hidden;
+}
+.ce-slot.is-drop-hit,
+.ce-thumb.is-drop-hit {
+  border-color: var(--ce-accent);
+  box-shadow: inset 0 0 0 2px var(--ce-accent);
+}
+/* dashed VACANCY in the ghost's vacated cell — the passive side of the swap
+   promise: the accent ring marks where the ghost GOES, this marks where the
+   ringed view will land. OPAQUE fill (an empty cell must read empty — a
+   translucent one lets whatever is beneath bleed through and looks like a
+   map living inside the frame); the dashed stroke is an inset OUTLINE so it
+   never touches the 1px cell borders. Geometry snapshotted once at arm. */
+.ce-drag-ph {
+  position: absolute;
+  z-index: 1;
+  outline: 1.5px dashed color-mix(in srgb, var(--ce-accent) 55%, var(--ce-border));
+  outline-offset: -3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ce-accent) 7%, var(--ce-bg));
+  pointer-events: none;
 }
 
 /* the rail thumb is a flex COLUMN (view + name row) — pin the button to it */
 .ce-thumb-max {
   top: 5px;
   right: 5px;
+}
+.ce-thumb .ce-drag-handle {
+  top: 5px;
+  right: 29px;
 }
 
 .ce-thumb .ce-pane-view {
@@ -1853,6 +1931,37 @@
 }
 .ce-shot-del:hover {
   color: var(--ce-danger, #e5484d);
+}
+/* ⠿ header reorder handle — hidden until row hover; its drag REORDERS the
+   canonical shot list (timeline rows + 数字键 relink order follow). The row
+   body keeps its own drag meaning: onto the 主输出 lane = create segment. */
+.ce-shot-grab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 14px;
+  color: var(--ce-text-2);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.ce-shot:hover .ce-shot-grab {
+  opacity: 1;
+}
+.ce-shot-grab:hover {
+  color: var(--ce-text-1);
+}
+.ce-shot-grab:active {
+  cursor: grabbing;
+}
+/* drop edges — a 2px accent line on the row edge the insertion will occupy */
+.ce-shot.is-drop-top {
+  box-shadow: inset 0 2px 0 var(--ce-accent);
+}
+.ce-shot.is-drop-bottom {
+  box-shadow: inset 0 -2px 0 var(--ce-accent);
 }
 .ce-shot-rename {
   flex: 1;
