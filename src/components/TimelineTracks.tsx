@@ -128,14 +128,19 @@ const EASE_ITEMS: { mode: EaseMode; labelKey: I18nKey }[] = [
   { mode: 'hold', labelKey: 'ease.step' },
 ]
 
-/** the seven GES attribute rows, in display order */const CHANNEL_ROWS: { id: ChannelId; labelKey: I18nKey; group: InsertGroup }[] = [
-  { id: 'lon', labelKey: 'ch.lon', group: 'position' },
-  { id: 'lat', labelKey: 'ch.lat', group: 'position' },
-  { id: 'height', labelKey: 'ch.height', group: 'position' },
-  { id: 'heading', labelKey: 'ch.heading', group: 'heading' },
-  { id: 'pitch', labelKey: 'ch.pitch', group: 'pitch' },
-  { id: 'roll', labelKey: 'ch.roll', group: 'roll' },
-  { id: 'fov', labelKey: 'ch.fov', group: 'fov' },
+/** the seven GES attribute rows, in display order */const CHANNEL_ROWS: {
+  id: ChannelId
+  labelKey: I18nKey
+  shortKey: I18nKey
+  group: InsertGroup
+}[] = [
+  { id: 'lon', labelKey: 'ch.lon', shortKey: 'ch.lon.short', group: 'position' },
+  { id: 'lat', labelKey: 'ch.lat', shortKey: 'ch.lat.short', group: 'position' },
+  { id: 'height', labelKey: 'ch.height', shortKey: 'ch.height.short', group: 'position' },
+  { id: 'heading', labelKey: 'ch.heading', shortKey: 'ch.heading.short', group: 'heading' },
+  { id: 'pitch', labelKey: 'ch.pitch', shortKey: 'ch.pitch.short', group: 'pitch' },
+  { id: 'roll', labelKey: 'ch.roll', shortKey: 'ch.roll.short', group: 'roll' },
+  { id: 'fov', labelKey: 'ch.fov', shortKey: 'ch.fov.short', group: 'fov' },
 ]
 
 type DragState = {
@@ -323,12 +328,18 @@ export function TimelineRuler({ view }: { view?: TlView }) {
           }
           return
         }
+        brushRef.current = { kind: 'scrub' }
         setScrubbing(true)
         scrubRuler(e)
       }}
       onPointerMove={(e) => {
+        /* the gesture owns the move stream via pointer capture, so guard on
+           the GESTURE STATE, never on e.buttons: several touch paths report
+           buttons=0 on pointermove (older iOS Safari among them), which used
+           to eat every scrub move — the ruler grabbed but never dragged */
         const b = brushRef.current
-        if (b && view && e.buttons === 1) {
+        if (!b) return
+        if (view) {
           const el = e.currentTarget
           if (b.kind === 'scrub') {
             setProgress(timeAt(e.clientX, el) / (DURATION || 1))
@@ -352,7 +363,7 @@ export function TimelineRuler({ view }: { view?: TlView }) {
           }
           return
         }
-        if (!view && e.buttons === 1) scrubRuler(e)
+        scrubRuler(e)
       }}
       onPointerUp={(e) => {
         const b = brushRef.current
@@ -1654,6 +1665,7 @@ export default function TimelineTracks() {
             key={row.id}
             id={row.id}
             label={t(row.labelKey)}
+            short={t(row.shortKey)}
             value={shotPose ? formatChannelValue(row.id, shotPose[row.id]) : undefined}
             solo={editable ? solo : null}
             onToggle={editable ? toggleSolo : undefined}
@@ -2022,6 +2034,7 @@ export default function TimelineTracks() {
 function ChannelTrack({
   id,
   label,
+  short,
   value,
   solo,
   onToggle,
@@ -2037,6 +2050,8 @@ function ChannelTrack({
 }: {
   id: TrackId
   label: string
+  /** narrow-viewport short label (phone breakpoint swaps the two in CSS) */
+  short?: string
   value?: string
   solo: TrackId | null
   /** absent on read-only rows — the label then renders as plain text */
@@ -2276,7 +2291,7 @@ function ChannelTrack({
       }${readOnly ? ' is-readonly' : ''}`}
     >
       <div className="ce-track-side">
-        <SoloLabel id={id} label={label} value={value} solo={solo} onToggle={onToggle} />
+        <SoloLabel id={id} label={label} short={short} value={value} solo={solo} onToggle={onToggle} />
         <button
           type="button"
           className={`ce-kf-vals${vals ? ' is-on' : ''}`}

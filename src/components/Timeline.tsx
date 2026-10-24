@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useUI, TL_H_DEFAULT } from '../store/ui'
 import { useRoute } from '../features/route/routeStore'
 import { timelineDuration } from '../features/route/pathMath'
@@ -7,6 +7,7 @@ import { renderRouteVideo, takeScreenshot } from '../features/export/actions'
 import { useT } from '../i18n'
 import { useDraw } from '../features/assets/drawStore'
 import TimelineTracks, { TimelineRuler, clampView } from './TimelineTracks'
+import TimelineSettings from './TimelineSettings'
 // HIDDEN (parked, not removed): growth-line & lock-camera toolbar entries —
 // restore together with their state reads, imports and the G/C hotkeys in App.
 // import { useReveal } from '../features/route/revealStore'
@@ -31,7 +32,86 @@ import {
   CameraIcon,
   RenderIcon,
   PenIcon,
+  SlidersIcon,
+  CloseIcon,
+  MoreIcon,
 } from './Icons'
+
+/** the bar's one-row breakpoint — MUST match the ui.css media query (700px) */
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 700px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 700px)')
+    const sync = () => setMobile(mq.matches)
+    mq.addEventListener('change', sync)
+    sync()
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+  return mobile
+}
+
+/**
+ * Phones: a whole cluster of bar buttons collapses behind ONE edge button and
+ * fans UP from it — the bar stays a single row (tools · playback · ruler ·
+ * more) instead of wrapping into a second rank that pushes the scrub ruler off
+ * the surface. Same surface vocabulary as the map-tools menu (surface-2,
+ * hairline border, 120ms rise) so the two read as one family.
+ */
+function BarPopover(props: {
+  side: 'left' | 'right'
+  label: string
+  icon: ReactNode
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className={`ce-bar-pop is-${props.side}`} ref={rootRef}>
+      <button
+        type="button"
+        className={`ce-icon-btn ce-bar-pop-btn${open ? ' is-on' : ''}`}
+        title={props.label}
+        aria-label={props.label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {props.icon}
+      </button>
+      {open && (
+        <div
+          className="ce-bar-pop-menu"
+          role="menu"
+          aria-label={props.label}
+          /* a plain action closes the fan; the map-tools split button keeps it
+             open — its own level-2 menu lives inside this surface */
+          onClick={(e) => {
+            if (!(e.target as HTMLElement).closest('.ce-tools-anchor')) setOpen(false)
+          }}
+        >
+          {props.children}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** Bottom timeline — thin transport bar (default) / multi-track editor (expanded). */
 export default function Timeline() {
@@ -74,6 +154,32 @@ export default function Timeline() {
 
   /* live resize of the expanded panel — the top edge is the grip */
   const [resizing, setResizing] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const isMobile = useIsMobile()
+
+  useEffect(() => {
+    if (!expanded) setSettingsOpen(false)
+  }, [expanded])
+
+  useEffect(() => {
+    if (!settingsOpen) return
+    const mobile = window.matchMedia('(max-width: 700px)')
+    const onViewportChange = () => {
+      if (!mobile.matches) setSettingsOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation()
+        setSettingsOpen(false)
+      }
+    }
+    mobile.addEventListener('change', onViewportChange)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      mobile.removeEventListener('change', onViewportChange)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [settingsOpen])
 
   /* ONE ruler, always in the transport bar: collapsed = full overview,
      expanded = view-windowed. Its measured edges feed --ce-tl-axis-l/r so the
@@ -97,6 +203,138 @@ export default function Timeline() {
     ro.observe(foot)
     return () => ro.disconnect()
   }, [])
+
+  /* ---- the bar's three clusters, as ELEMENTS (not components): the desktop
+     bar lays them out inline, ≤700px mounts the SAME elements inside the two
+     edge popovers — so no button is ever duplicated (pressed states, open
+     menus and handlers stay single-source). ---- */
+
+  /* PARKED: growth-line & lock-camera — multi-shot review pending
+     (per-shot semantics unclear for a session-wide lock). Re-enable with the
+     imports, state reads and the G/C hotkeys in App.tsx. */
+  const toolsCluster = (
+    <>
+      <ToolSplitButton />
+      <button
+        type="button"
+        className={`ce-icon-btn${sunOpen ? ' is-on' : ''}`}
+        title="Sun & time of day (S)"
+        aria-pressed={sunOpen}
+        onClick={() => toggleSunPanel()}
+      >
+        <SunIcon />
+      </button>
+      <button
+        type="button"
+        className={`ce-icon-btn${drawerOpen ? ' is-on' : ''}`}
+        title="Tools (T)"
+        aria-pressed={drawerOpen}
+        onClick={() => toggleDrawer()}
+      >
+        <GridIcon />
+      </button>
+    </>
+  )
+
+  /* the playback core — ALWAYS inline, never folded into a popover: it is the
+     middle of the phone bar (the one thing a scrub bar cannot hide) */
+  const transportCore = (
+    <>
+      <button type="button" className="ce-icon-btn" title="Go to start"
+        onClick={() => { setProgress(0); setPlaying(false) }}>
+        <SkipStartIcon />
+      </button>
+      <button
+        type="button"
+        className={`ce-play${playing ? ' is-playing' : ''}`}
+        title={playing ? 'Pause (Space)' : 'Play (Space)'}
+        onClick={() => setPlaying(!playing)}
+      >
+        {playing ? <PauseIcon /> : <PlayIcon />}
+      </button>
+      <button type="button" className="ce-icon-btn" title="Go to end"
+        onClick={() => { setProgress(1); setPlaying(false) }}>
+        <SkipEndIcon />
+      </button>
+    </>
+  )
+
+  const actionsCluster = (
+    <>
+      <button
+        type="button"
+        className={`ce-icon-btn${targetPickMode || hasTarget ? ' is-on' : ''}`}
+        title={
+          targetPickMode
+            ? 'Camera target — click the globe to place it (Esc to cancel)'
+            : hasTarget
+              ? 'Camera target active — click to remove'
+              : 'Set camera target (camera keeps aiming at it)'
+        }
+        onClick={() => {
+          if (targetPickMode) setTargetPickMode(false)
+          else if (hasTarget) setTarget(null)
+          else setTargetPickMode(true)
+        }}
+      >
+        <TargetIcon />
+      </button>
+      <button
+        type="button"
+        className={`ce-icon-btn${rightDrawerOpen ? ' is-on' : ''}`}
+        title="Route editor (R)"
+        aria-pressed={rightDrawerOpen}
+        onClick={() => toggleRightDrawer()}
+      >
+        <RouteIcon />
+      </button>
+      <button type="button" className="ce-icon-btn" title={t('tl.screenshot')} onClick={takeScreenshot}>
+        <CameraIcon />
+      </button>
+      <button
+        type="button"
+        className={`ce-render-btn${rendering ? ' is-rendering' : ''}${exportStatus === 'error' ? ' is-error' : ''}`}
+        disabled={!route && !rendering}
+        title={
+          exportStatus === 'error'
+            ? useExport.getState().error ?? t('tl.renderFail')
+            : rendering
+              ? t('tl.rendering', { p: Math.round(exportProgress * 100) })
+              : route
+                ? t('tl.render')
+                : t('tl.renderNoRoute')
+        }
+        onClick={renderRouteVideo}
+      >
+        {rendering ? (
+          <span className="ce-render-label">{Math.round(exportProgress * 100)}%</span>
+        ) : (
+          <RenderIcon />
+        )}
+      </button>
+      <button type="button" className="ce-icon-btn" title={expanded ? 'Collapse timeline' : 'Expand timeline'}
+        onClick={() => toggleTimeline()}>
+        {expanded ? <ChevronDownIcon /> : <ChevronUpIcon />}
+      </button>
+      <button type="button" className="ce-icon-btn" title="Fullscreen preview"
+        onClick={() => setPreviewMode(true)}>
+        <ExpandIcon />
+      </button>
+      {expanded && (
+        <button
+          type="button"
+          className={`ce-icon-btn ce-tl-settings-toggle${settingsOpen ? ' is-on' : ''}`}
+          title={t('tset.title')}
+          aria-label={t('tset.title')}
+          aria-expanded={settingsOpen}
+          aria-controls="ce-tl-settings-dialog"
+          onClick={() => setSettingsOpen((open) => !open)}
+        >
+          <SlidersIcon />
+        </button>
+      )}
+    </>
+  )
 
   return (
     <footer ref={footerRef} className={`ce-timeline${resizing ? ' is-resizing' : ''}`} data-expanded={expanded}>
@@ -138,63 +376,18 @@ export default function Timeline() {
       )}
       <div className="ce-tl-bar">
         <div className="ce-transport">
-          {/* PARKED: growth-line & lock-camera — multi-shot review pending
-              (per-shot semantics unclear for a session-wide lock). Re-enable
-              with the imports, state reads and the G/C hotkeys in App.tsx.
-          <button
-            type="button"
-            className={`ce-icon-btn${growthLine ? ' is-on' : ''}`}
-            title="Growth line — keyframed path reveal (G)"
-            aria-pressed={growthLine}
-            onClick={() => setGrowthLine(!growthLine)}
-          >
-            <GrowthIcon />
-          </button>
-          <button
-            type="button"
-            className={`ce-icon-btn${cameraLocked ? ' is-on' : ''}`}
-            title="Lock camera — freeze the viewpoint; growth keeps playing (C)"
-            aria-pressed={cameraLocked}
-            onClick={() => setCameraLocked(!cameraLocked)}
-          >
-            <LockIcon />
-          </button>
-          */}
-          <ToolSplitButton />
-          <button
-            type="button"
-            className={`ce-icon-btn${sunOpen ? ' is-on' : ''}`}
-            title="Sun & time of day (S)"
-            aria-pressed={sunOpen}
-            onClick={() => toggleSunPanel()}
-          >
-            <SunIcon />
-          </button>
-          <button
-            type="button"
-            className={`ce-icon-btn${drawerOpen ? ' is-on' : ''}`}
-            title="Tools (T)"
-            aria-pressed={drawerOpen}
-            onClick={() => toggleDrawer()}
-          >
-            <GridIcon />
-          </button>
-          <button type="button" className="ce-icon-btn" title="Go to start"
-            onClick={() => { setProgress(0); setPlaying(false) }}>
-            <SkipStartIcon />
-          </button>
-          <button
-            type="button"
-            className={`ce-play${playing ? ' is-playing' : ''}`}
-            title={playing ? 'Pause (Space)' : 'Play (Space)'}
-            onClick={() => setPlaying(!playing)}
-          >
-            {playing ? <PauseIcon /> : <PlayIcon />}
-          </button>
-          <button type="button" className="ce-icon-btn" title="Go to end"
-            onClick={() => { setProgress(1); setPlaying(false) }}>
-            <SkipEndIcon />
-          </button>
+          {isMobile ? (
+            /* phones: ONE left button — the rest of the cluster fans UP from
+               it, so the bar never needs a second row. Same glyph + caret as
+               its right-hand twin: both are "open the tray" affordances, and
+               a pen here would wrongly promise that tapping starts drawing. */
+            <BarPopover side="left" label={t('tl.popTools')} icon={<MoreIcon />}>
+              {toolsCluster}
+            </BarPopover>
+          ) : (
+            toolsCluster
+          )}
+          {transportCore}
         </div>
 
         {/* the ONE ruler — this slot is its home in BOTH states (never moves);
@@ -204,67 +397,50 @@ export default function Timeline() {
         </div>
 
         <div className="ce-tl-actions">
-          <button
-            type="button"
-            className={`ce-icon-btn${targetPickMode || hasTarget ? ' is-on' : ''}`}
-            title={
-              targetPickMode
-                ? 'Camera target — click the globe to place it (Esc to cancel)'
-                : hasTarget
-                  ? 'Camera target active — click to remove'
-                  : 'Set camera target (camera keeps aiming at it)'
-            }
-            onClick={() => {
-              if (targetPickMode) setTargetPickMode(false)
-              else if (hasTarget) setTarget(null)
-              else setTargetPickMode(true)
-            }}
-          >
-            <TargetIcon />
-          </button>
-          <button
-            type="button"
-            className={`ce-icon-btn${rightDrawerOpen ? ' is-on' : ''}`}
-            title="Route editor (R)"
-            aria-pressed={rightDrawerOpen}
-            onClick={() => toggleRightDrawer()}
-          >
-            <RouteIcon />
-          </button>
-          <button type="button" className="ce-icon-btn" title={t('tl.screenshot')} onClick={takeScreenshot}>
-            <CameraIcon />
-          </button>
-          <button
-            type="button"
-            className={`ce-render-btn${rendering ? ' is-rendering' : ''}${exportStatus === 'error' ? ' is-error' : ''}`}
-            disabled={!route && !rendering}
-            title={
-              exportStatus === 'error'
-                ? useExport.getState().error ?? t('tl.renderFail')
-                : rendering
-                  ? t('tl.rendering', { p: Math.round(exportProgress * 100) })
-                  : route
-                    ? t('tl.render')
-                    : t('tl.renderNoRoute')
-            }
-            onClick={renderRouteVideo}
-          >
-            {rendering ? (
-              <span className="ce-render-label">{Math.round(exportProgress * 100)}%</span>
-            ) : (
-              <RenderIcon />
-            )}
-          </button>
-          <button type="button" className="ce-icon-btn" title={expanded ? 'Collapse timeline' : 'Expand timeline'}
-            onClick={() => toggleTimeline()}>
-            {expanded ? <ChevronDownIcon /> : <ChevronUpIcon />}
-          </button>
-          <button type="button" className="ce-icon-btn" title="Fullscreen preview"
-            onClick={() => setPreviewMode(true)}>
-            <ExpandIcon />
-          </button>
+          {isMobile ? (
+            /* phones: ONE right button — target / route / shot / render /
+               timeline / preview fan UP from it */
+            <BarPopover side="right" label={t('tl.popMore')} icon={<MoreIcon />}>
+              {actionsCluster}
+            </BarPopover>
+          ) : (
+            actionsCluster
+          )}
         </div>
       </div>
+
+      {settingsOpen && (
+        <>
+          <button
+            type="button"
+            className="ce-tl-settings-backdrop"
+            aria-label={t('tset.close')}
+            onClick={() => setSettingsOpen(false)}
+          />
+          <section
+            id="ce-tl-settings-dialog"
+            className="ce-tl-settings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('tset.title')}
+          >
+            <header className="ce-tl-settings-head">
+              <strong>{t('tset.title')}</strong>
+              <button
+                type="button"
+                className="ce-icon-btn"
+                aria-label={t('tset.close')}
+                title={t('tset.close')}
+                autoFocus
+                onClick={() => setSettingsOpen(false)}
+              >
+                <CloseIcon />
+              </button>
+            </header>
+            <TimelineSettings />
+          </section>
+        </>
+      )}
 
       {/* expanded editor — when collapsed it hides entirely (stays mounted so
           solo / selection survive); the bar's ruler covers scrubbing */}

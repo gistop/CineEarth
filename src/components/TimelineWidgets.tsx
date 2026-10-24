@@ -15,22 +15,33 @@ import { useT } from '../i18n'
 export function SoloLabel<T extends string>({
   id,
   label,
+  short,
   value,
   solo,
   onToggle,
 }: {
   id: T
   label: string
+  /** narrow-viewport short form: a 96px label column cannot hold the full
+   *  name + value + row buttons — CSS swaps the two spans at the phone
+   *  breakpoint (see .ce-name-full/.ce-name-short) */
+  short?: string
   value?: string
   /** the row selection (only needed when the label is a toggle) */
   solo?: T | null
   onToggle?: (id: T) => void
 }) {
   const t = useT()
+  const name = (
+    <span className="ce-track-name">
+      <span className="ce-name-full">{label}</span>
+      {short != null && <span className="ce-name-short">{short}</span>}
+    </span>
+  )
   if (!onToggle) {
     return (
       <div className="ce-track-label" title={label}>
-        <span className="ce-track-name">{label}</span>
+        {name}
         {value != null && <span className="ce-track-value">{value}</span>}
       </div>
     )
@@ -42,7 +53,7 @@ export function SoloLabel<T extends string>({
       onClick={() => onToggle(id)}
       title={t('w.soloTitle', { label })}
     >
-      <span className="ce-track-name">{label}</span>
+      {name}
       {value != null && <span className="ce-track-value">{value}</span>}
     </button>
   )

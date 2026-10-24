@@ -1450,6 +1450,56 @@
   gap: 2px;
 }
 
+/* ---------- phone bar: edge popovers (BarPopover) ----------
+   ≤700px folds each side cluster behind ONE button; the cluster fans UP from
+   the bar as a surface — same vocabulary as .ce-tools-menu (surface-2,
+   hairline border, soft shadow) so the two menus read as one family. */
+
+.ce-bar-pop {
+  position: relative;
+  display: inline-flex;
+}
+.ce-bar-pop-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  z-index: 45;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  /* a shrink-to-fit absolute box measures against its 30px anchor, not the
+     viewport — max-content keeps the cluster on ONE row (wraps only when the
+     phone is too narrow for it) */
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 5px;
+  background: var(--ce-surface-2);
+  border: 1px solid var(--ce-border);
+  border-radius: var(--ce-radius-sm);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 28%);
+  animation: ce-bar-pop-in 120ms var(--ce-ease);
+}
+.ce-bar-pop.is-left .ce-bar-pop-menu {
+  left: 0;
+}
+.ce-bar-pop.is-right .ce-bar-pop-menu {
+  right: 0;
+}
+@keyframes ce-bar-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ce-bar-pop-menu {
+    animation: none;
+  }
+}
+
 /* ----- expanded: multi-track editor ----- */
 
 /* One coordinate system: the lane column is aligned to the BAR RULER's
@@ -2082,6 +2132,12 @@
 }
 .ce-track-label:hover .ce-track-name {
   color: var(--ce-text);
+}
+/* narrow-viewport label alternates: .ce-name-short shows only inside the
+   phone breakpoint (see the 700px media query); everywhere else the full
+   name renders and the short span is display-none dead weight */
+.ce-name-short {
+  display: none;
 }
 .ce-track-label.is-solo .ce-track-name {
   color: var(--ce-accent);
@@ -3431,5 +3487,130 @@
   }
   50% {
     opacity: 1;
+  }
+}
+
+.ce-tl-settings-toggle,
+.ce-tl-settings-dialog,
+.ce-tl-settings-backdrop {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  /* ONE row on phones: [tools ▴][◀ ▶ ▶|][———— ruler ————][⋯ ▴]. The two side
+     clusters live in edge popovers (BarPopover) instead of a second rank, so
+     the scrub ruler keeps its width and the bar stays at the stock collapsed
+     height — no overflow, credits strip clear of it. */
+  .ce-tl-bar {
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 0 8px;
+  }
+
+  .ce-transport,
+  .ce-tl-actions {
+    flex: none;
+    gap: 2px;
+  }
+
+  .ce-tl-ruler-slot {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
+
+  /* Leave .ce-credits alone. Cesium's credit block is an ABSOLUTE, bottom-
+     anchored 28px-tall box (the ion logo keeps its natural PNG size); the
+     strip itself only owns its 4px padding, so any overflow clip here sliced
+     the logo down to a 4px dash above the bar. With the bar back to its stock
+     48px the natural strip grows UPWARD over the globe and never touches the
+     tools row — no clamp needed. */
+
+  /* DO NOT pin --lane-label / --ce-tracks-pr here. Both are DERIVED from the
+     bar ruler's measured edges (--ce-tl-axis-l/r, see .ce-tracks); hardcoding
+     them made the lanes run 118→358 while the ruler sat at 144→346 — the
+     scrub strip and the shot tracks visibly disagreed. In the one-row bar the
+     ruler starts right of the transport, so the derivation lands on a ~122px
+     label column on its own — roomier than the old 96px pin, not tighter. */
+  /* the 96px label column cannot hold full channel names + the live value +
+     the row buttons — the full name muddles into "相机…" ellipses. The short
+     keys (经度/纬度/…) take over, and the two per-row buttons (value-tag
+     toggle, insert-key) hide until their row is SELECTED — the label itself
+     is the selector, so one tap reveals them. An already-ON value-tag toggle
+     stays visible as the state's witness. */
+  .ce-name-full {
+    display: none;
+  }
+  .ce-name-short {
+    display: inline;
+  }
+  .ce-kf-vals:not(.is-on),
+  .ce-kf-add {
+    display: none;
+  }
+  .ce-track.is-selected .ce-kf-vals,
+  .ce-track.is-selected .ce-kf-add {
+    display: grid;
+  }
+
+  .ce-tracks > .ce-tl-settings {
+    display: none;
+  }
+
+  .ce-tl-settings-toggle {
+    display: inline-flex;
+  }
+
+  .ce-tl-settings-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: block;
+    background: rgb(0 0 0 / 35%);
+  }
+
+  .ce-tl-settings-dialog {
+    position: fixed;
+    right: 12px;
+    bottom: calc(var(--ce-tl-h) + 8px);
+    z-index: 71;
+    display: flex;
+    flex-direction: column;
+    width: min(300px, calc(100vw - 24px));
+    max-height: calc(100dvh - var(--ce-tl-h) - 16px);
+    overflow: hidden;
+    background: var(--ce-surface);
+    border: 1px solid var(--ce-border-strong);
+    border-radius: var(--ce-radius);
+    box-shadow: 0 14px 36px rgb(0 0 0 / 35%);
+  }
+
+  .ce-tl-settings-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 44px;
+    padding: 4px 8px 4px 14px;
+    border-bottom: 1px solid var(--ce-border);
+    font-size: 13px;
+  }
+
+  .ce-tl-settings-dialog .ce-tl-settings {
+    position: static;
+    width: auto;
+    padding: 14px;
+    gap: 16px;
+    overflow-y: auto;
+  }
+
+  .ce-tl-settings-dialog .ce-tl-set-name {
+    font-size: 12px;
+  }
+
+  .ce-tl-settings-dialog .ce-tl-num,
+  .ce-tl-settings-dialog .ce-tl-sel {
+    height: 32px;
+    font-size: 12px;
   }
 }

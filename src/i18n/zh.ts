@@ -215,11 +215,16 @@ export const zh: Dict = {
   /* timeline header & settings */
   'tl.heightAria': '时间轴高度',
   'tl.heightTitle': '拖动调整高度 · 双击复位',
+  /* phone bar: the two edge popovers that hold the rest of the clusters */
+  'tl.popTools': '工具 —— 点击向上展开',
+  'tl.popMore': '更多 —— 点击向上展开',
   'tl.renderNoRoute': '未选中机位 — 无可渲染的航线',
   'tl.screenshot': '截图',
   'tl.render': '渲染视频 (MP4)',
   'tl.rendering': '渲染中 {p}% — 点击取消',
   'tl.renderFail': '渲染失败',
+  'tset.title': '时间轴设置',
+  'tset.close': '关闭时间轴设置',
   'tset.length': '长度',
   'tset.fit': '内容总长 {dur}s — 有关键帧在时长之外（数据已保留）· 点击适配内容总长',
   'tset.lengthTitle': '时间轴长度（{unit}）— 回车确认',
@@ -270,14 +275,23 @@ export const zh: Dict = {
   'program.cutOn': '可切镜',
   'program.cutOff': '不切镜',
 
-  /* camera channel rows */
+  /* camera channel rows. .short = phone-breakpoint label column (96px): the
+     相机 prefix carries no information there (the 机位 header sits one row
+     up), full names only ever muddle into "相机…" ellipses */
   'ch.lon': '相机经度',
+  'ch.lon.short': '经度',
   'ch.lat': '相机纬度',
+  'ch.lat.short': '纬度',
   'ch.height': '相机海拔',
+  'ch.height.short': '海拔',
   'ch.heading': '相机平移',
+  'ch.heading.short': '平移',
   'ch.pitch': '相机倾斜',
+  'ch.pitch.short': '倾斜',
   'ch.roll': '相机翻滚',
+  'ch.roll.short': '翻滚',
   'ch.fov': '相机视野',
+  'ch.fov.short': '视野',
   'ch.valueAria': '编辑{label}关键帧值',
   'ch.valueTitle': '点击修改该值',
   'ch.valueShow': '显示/隐藏本通道关键帧右下角的值',

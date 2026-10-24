@@ -122,6 +122,15 @@ export const ExpandIcon = ({ size = 15, className }: P) => (
   </svg>
 )
 
+/** overflow — the phone bar's right cluster collapses behind it */
+export const MoreIcon = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <circle cx="5.5" cy="12" r="1.35" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.35" fill="currentColor" stroke="none" />
+    <circle cx="18.5" cy="12" r="1.35" fill="currentColor" stroke="none" />
+  </svg>
+)
+
 export const RouteIcon = ({ size = 16, className }: P) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <circle cx="5.5" cy="18.5" r="2" />
